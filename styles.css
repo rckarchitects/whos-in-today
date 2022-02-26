@@ -1,0 +1,73 @@
+span.WITconfirmed {
+	padding: 3px 12px 3px 12px;
+	background: #136ebf;
+	border: 2px solid #fff;
+	height: 20px;
+	border-radius: 5px;
+	font-size: 0.9em;
+	line-height: 32px;
+	color: white;
+}
+
+span.WITnotconfirmed {
+	padding: 3px 12px 3px 12px;
+	background: #fff;
+	border: 2px solid #136ebf;
+	height: 20px;
+	border-radius: 5px;
+	font-size: 0.9em;
+	line-height: 32px;
+	color: #136ebf;
+}
+
+td.WITheatmap {
+	
+	width: 20%;
+	text-align: center;	
+	
+}
+
+td.WITheatmap:hover {
+	
+	background: #136ebf;
+	
+}
+
+td.WITheatmap-today {
+	
+	background: #136ebf;
+	color: #fff;
+	
+}
+
+div.WIT-popup {
+	
+	display: none;
+	position: absolute;
+	padding: 5px;
+	background: #136ebf;
+	min-height: 100px;
+	min-width: 100px;
+	max-width: 275px;
+	border-radius: 10px;
+	border: 2px solid #fff;
+	color: #fff;
+	animation-name: WITPop;
+	animation-duration: 0.5s;
+	text-align: left;
+	opacity: 0;
+	cursor: pointer;
+	padding: 12px;
+	
+}
+
+div.WIT-popup:hover {
+	
+	opacity: 1;
+	
+}
+
+@keyframes WITPop {
+  0% {opacity:0;}
+  100% {opacity:1;}
+}

@@ -162,7 +162,6 @@ function whos_in_today_shortcode() {
  
 }
 
-
 function WITPopUp($day) {
 	
 	global $wpdb;

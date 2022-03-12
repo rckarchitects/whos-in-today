@@ -8,8 +8,6 @@
    Author URI: https://russellcurtis.co.uk
 */
 
-// Create a new table
-
 require_once('functions.php');
 
 function whosintoday_table(){
@@ -76,14 +74,7 @@ function WITLoadCustomCSS() {
     wp_enqueue_style('whos-in-today-styles');
 }
 
-function WITLoadCustomScripts() {
-    wp_register_script( 'whos-in-today-scripts', plugins_url('script.js',__FILE__ ));
-	wp_enqueue_script('whos-in-today-scripts');
-}
-
 add_action( 'wp_enqueue_scripts',WITLoadCustomCSS);
-//add_action( 'wp_enqueue_scripts',WITLoadCustomScripts);
-
 
 function displayList(){
   include "displaylist.php";

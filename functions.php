@@ -2,6 +2,72 @@
 
 $WITLocations = array('Studio','Home','Holiday','Elsewhere','Unpaid Leave','Absent','Isolating');
 
+function WIT_CMAP_API() {
+	
+	$api_address = "";
+	$consumar_key = "";
+	$consumar_secret = "";
+	
+	return array($api_address,$consumar_key,$consumar_secret);
+	
+}
+
+function WITDisplayAPIData() {
+	
+	// This is still under development
+	
+	$api_details = WIT_CMAP_API();
+	
+	if ($api_details[0]) {
+	
+	echo "<h3>CMAP</h3><p>API Credentials: " .  implode (",",$api_details) . "</p>";
+	
+	$url = $api_details . "/OAuth/RequestAuth";
+	
+	}
+		
+}
+
+function whosintoday_table(){
+
+  global $wpdb;
+  $charset_collate = $wpdb->get_charset_collate();
+
+  $tablename = $wpdb->prefix."whosintoday";
+
+  $sql = "CREATE TABLE " . $tablename . " (
+  id mediumint(11) NOT NULL AUTO_INCREMENT,
+  userid int(6) NOT NULL,
+  day date NOT NULL,
+  location varchar(80) NOT NULL,
+  PRIMARY KEY  (id)
+  ) " . $charset_collate . ";";
+
+  require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
+  dbDelta( $sql );
+
+}
+
+function whosintoday_bankholidays_table(){
+
+  global $wpdb;
+  $charset_collate = $wpdb->get_charset_collate();
+
+  $tablename = $wpdb->prefix."whosintoday_bankholidays";
+
+  $sql = "CREATE TABLE " . $tablename . " (
+  id mediumint(11) NOT NULL AUTO_INCREMENT,
+  added_by int(6) NOT NULL,
+  name varchar(80) NOT NULL,
+  bankholiday date NOT NULL,
+  PRIMARY KEY  (id)
+  )" . $charset_collate . ";";
+  
+  require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
+  dbDelta( $sql );
+
+}
+
 function WITBeginWeek($input) {
 	
 	$dayofweek = date("w", $input);
@@ -43,18 +109,18 @@ function WITCheckBankHoliday($time) {
 
 function WITCheckAllUsers() {
 	
-	$all_users = get_users();
+	$all_users = get_users(array( 'role__in' => array( 'author','editor','administrator' ) ));
 	
 	$output_id = array();
 	$output_name = array();
 	
 	foreach ($all_users AS $user) {
 		
-		$output_id[] = $user->ID;
-		$output_name[] = $user->first_name . "&nbsp;" . $user->last_name;
+			$output_id[] = $user->ID;
+			$output_name[] = $user->first_name . "&nbsp;" . $user->last_name;
 		
 	}
-	
+
 	return array($output_id,$output_name);
 	
 }
@@ -64,6 +130,7 @@ function WITNoLocationFound($day) {
 	$user_array = WITCheckAllUsers();
 	$user_ids = $user_array[0];
 	$user_name = $user_array[1];
+	$user_role = $user_array[2];
 	$array_in_today = array();
 	
 	global $wpdb;
@@ -85,7 +152,9 @@ function WITNoLocationFound($day) {
 			
 			if (!$title_needed) { $output = $output . "<h3>No Location Found</h3>"; $title_needed = "no"; }
 			
-			$output = $output . "<span class='WITnotconfirmed'>" . $user_name[$count] . "</span> ";
+			if (1 == 1) {
+				$output = $output . "<span class='WITnotconfirmed'>" . $user_name[$count] . "</span> ";
+			}
 		
 		}
 		
@@ -170,15 +239,13 @@ function WITPopUp($day) {
 	$sql = "SELECT * FROM `".$tablename."` WHERE `day` = '" . $day . "' AND `location` = 'Studio' order by userid";
 	$entriesList = $wpdb->get_results($sql);
 	
-	
-	
 	$output = "<div id='" . $day ."_studio' class='WIT-popup'>";
 	
 	$total = count($entriesList);
 	
 	if ($total > 0) {
 		
-	$output = $output . "<p>Studio&mdash;" . WITTidyDate($day) . "<br />" . $total . " people in the studio</p>";
+	$output = $output . "<strong>Studio&mdash;" . WITTidyDate($day) . "<br />" . $total . " people in the studio</strong><br />";
 	
 	$array_output = array();
 	

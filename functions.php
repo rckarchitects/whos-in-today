@@ -1,6 +1,14 @@
 <?php
 
-$WITLocations = array('Studio','Home','Holiday','Elsewhere','Unpaid Leave','Absent','Isolating');
+// Prevent direct file access
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+// Define global locations array
+if (!isset($GLOBALS['WITLocations'])) {
+    $GLOBALS['WITLocations'] = array('Studio','Home','Holiday','Elsewhere','Unpaid Leave','Absent','Isolating');
+}
 
 function WIT_CMAP_API() {
 	
@@ -28,46 +36,6 @@ function WITDisplayAPIData() {
 		
 }
 
-function whosintoday_table(){
-
-  global $wpdb;
-  $charset_collate = $wpdb->get_charset_collate();
-
-  $tablename = $wpdb->prefix."whosintoday";
-
-  $sql = "CREATE TABLE " . $tablename . " (
-  id mediumint(11) NOT NULL AUTO_INCREMENT,
-  userid int(6) NOT NULL,
-  day date NOT NULL,
-  location varchar(80) NOT NULL,
-  PRIMARY KEY  (id)
-  ) " . $charset_collate . ";";
-
-  require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
-  dbDelta( $sql );
-
-}
-
-function whosintoday_bankholidays_table(){
-
-  global $wpdb;
-  $charset_collate = $wpdb->get_charset_collate();
-
-  $tablename = $wpdb->prefix."whosintoday_bankholidays";
-
-  $sql = "CREATE TABLE " . $tablename . " (
-  id mediumint(11) NOT NULL AUTO_INCREMENT,
-  added_by int(6) NOT NULL,
-  name varchar(80) NOT NULL,
-  bankholiday date NOT NULL,
-  PRIMARY KEY  (id)
-  )" . $charset_collate . ";";
-  
-  require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
-  dbDelta( $sql );
-
-}
-
 function WITBeginWeek($input) {
 	
 	$dayofweek = date("w", $input);
@@ -86,25 +54,26 @@ function WITBeginWeek($input) {
 }
 
 function WITCheckBankHoliday($time) {
-	
-	if (date("w",$time) == 0 OR date("w",$time) == 6 ) { return "It's the weekend!"; }
+
+	if (date("w",$time) == 0 OR date("w",$time) == 6 ) { return __("It's the weekend!", 'whos-in-today'); }
 	else {
-		
+
 		global $wpdb;
-		$tablename = $wpdb->prefix."whosintoday_bankholidays";	
-		$entriesList = $wpdb->get_results("SELECT `name` FROM `".$tablename."` WHERE `bankholiday` = '" . date("Y-m-d",$time) . "' LIMIT 1");
-		
+		$tablename = $wpdb->prefix."whosintoday_bankholidays";
+		$date_check = date("Y-m-d",$time);
+		$entriesList = $wpdb->get_results($wpdb->prepare("SELECT `name` FROM `".$tablename."` WHERE `bankholiday` = %s LIMIT 1", $date_check));
+
 		if(count($entriesList) > 0){
-			
+
 			foreach( $entriesList as $entry ) {
 				return $entry->name;
 			}
-			
+
 		}
 
 
 	}
-	
+
 }
 
 function WITCheckAllUsers() {
@@ -126,40 +95,42 @@ function WITCheckAllUsers() {
 }
 
 function WITNoLocationFound($day) {
-	
+
 	$user_array = WITCheckAllUsers();
 	$user_ids = $user_array[0];
 	$user_name = $user_array[1];
-	$user_role = $user_array[2];
+	$user_role = isset($user_array[2]) ? $user_array[2] : array();
 	$array_in_today = array();
-	
+	$output = '';
+
 	global $wpdb;
 	$tablename = $wpdb->prefix."whosintoday";
-	
-	$sql = "SELECT `userid` FROM ".$tablename." WHERE `day` = '" . date("Y-m-d",time()) . "'";
-	
+	$today = date("Y-m-d",time());
+
+	$sql = $wpdb->prepare("SELECT `userid` FROM ".$tablename." WHERE `day` = %s", $today);
+
 	$entriesList = $wpdb->get_results($sql);
-	
+
 	//var_dump($user_ids);
-	
+
 	foreach( $entriesList as $entry ) { $array_in_today[] = $entry->userid; }
-	
+
 	$count = 0;
 
 	foreach ($user_ids AS $id) {
-	
+
 		if (!in_array($id,$array_in_today)) {
-			
-			if (!$title_needed) { $output = $output . "<h3>No Location Found</h3>"; $title_needed = "no"; }
-			
+
+			if (!isset($title_needed)) { $output = $output . "<h3>" . esc_html__('No Location Found', 'whos-in-today') . "</h3>"; $title_needed = "no"; }
+
 			if (1 == 1) {
-				$output = $output . "<span class='WITnotconfirmed'>" . $user_name[$count] . "</span> ";
+				$output = $output . "<span class='WITnotconfirmed'>" . esc_html($user_name[$count]) . "</span> ";
 			}
-		
+
 		}
-		
+
 		$count++;
-	
+
 	}
 	
 	return $output;
@@ -189,46 +160,48 @@ function WITPopUpScript() {
 }
 
 function whos_in_today_shortcode() {
-	
+
 	global $wpdb;
-	
+
 	$holidaycheck = WITCheckBankHoliday(time());
+	$output = '';
 
 	if (!$holidaycheck) {
 
-		$tablename = $wpdb->prefix."whosintoday";	
-		$entriesList = $wpdb->get_results("SELECT * FROM ".$tablename." WHERE `day` = '" . date("Y-m-d",time()) . "' order by location, userid");
+		$tablename = $wpdb->prefix."whosintoday";
+		$today = date("Y-m-d",time());
+		$entriesList = $wpdb->get_results($wpdb->prepare("SELECT * FROM ".$tablename." WHERE `day` = %s order by location, userid", $today));
 
 		if(count($entriesList) > 0){
-				
+
 			$current_location = NULL;
 			$array_names = array();
 
 			foreach( $entriesList as $entry ) {
-				
-				if ($current_location != $entry->location) { $output = $output . "<h3><strong>" . $entry->location . "</strong></h3>"; }
-				
+
+				if ($current_location != $entry->location) { $output = $output . "<h3><strong>" . esc_html($entry->location) . "</strong></h3>"; }
+
 				$user = get_userdata( $entry->userid );
-				if (!$user->first_name OR !$user->last_name) { $username = $user->user_login; } else { $username = $user->first_name."&nbsp;".$user->last_name; }
-				
-				$output = $output . "<span class='WITconfirmed'>" . $username . "</span> ";
-				
+				if ($user && (!$user->first_name OR !$user->last_name)) { $username = $user->user_login; } elseif ($user) { $username = $user->first_name."&nbsp;".$user->last_name; } else { $username = 'Unknown User'; }
+
+				$output = $output . "<span class='WITconfirmed'>" . esc_html($username) . "</span> ";
+
 				$current_location = $entry->location;
 
 			}
-			
+
 			$output = $output . WITNoLocationFound(date("Y-m-d",time()));
-			   
+
 		} else {
-			
-			$output = "Nobody is in today!";
-			   
+
+			$output = __('Nobody is in today!', 'whos-in-today');
+
 		}
-		
+
 	} else { $output = $holidaycheck; }
-	 
+
 	return "<div>" . $output . "</div>";
- 
+
 }
 
 function WITPopUp($day) {
@@ -236,33 +209,35 @@ function WITPopUp($day) {
 	global $wpdb;
 	
 	$tablename = $wpdb->prefix."whosintoday";
-	$sql = "SELECT * FROM `".$tablename."` WHERE `day` = '" . $day . "' AND `location` = 'Studio' order by userid";
+	$sql = $wpdb->prepare("SELECT * FROM `".$tablename."` WHERE `day` = %s AND `location` = 'Studio' order by userid", $day);
 	$entriesList = $wpdb->get_results($sql);
 	
-	$output = "<div id='" . $day ."_studio' class='WIT-popup'>";
-	
+	$output = "<div id='" . esc_attr($day) ."_studio' class='WIT-popup'>";
+
 	$total = count($entriesList);
-	
+
 	if ($total > 0) {
-		
-	$output = $output . "<strong>Studio&mdash;" . WITTidyDate($day) . "<br />" . $total . " people in the studio</strong><br />";
+
+	$output = $output . "<strong>Studio&mdash;" . esc_html(WITTidyDate($day)) . "<br />" . sprintf(_n('%d person in the studio', '%d people in the studio', $total, 'whos-in-today'), intval($total)) . "</strong><br />";
 	
 	$array_output = array();
 	
 		foreach( $entriesList as $entry ) {
 			
 			$user = get_userdata( $entry->userid );
-			if (!$user->first_name OR !$user->last_name) { $username = $user->user_login; } else { $username = $user->first_name."&nbsp;".$user->last_name; }
+			if ($user && (!$user->first_name OR !$user->last_name)) { $username = $user->user_login; } elseif ($user) { $username = $user->first_name."&nbsp;".$user->last_name; } else { $username = 'Unknown User'; }
 			
 			$array_output[] = $username;
 			
 		}
 		
 	asort($array_output);
-		
-	$output = $output . implode(", ",$array_output);
+
+	// Escape each username before imploding
+	$escaped_output = array_map('esc_html', $array_output);
+	$output = $output . implode(", ", $escaped_output);
 	
-	} else { $output = $output . "There's nobody in the studio on " . date("l",WITDropToTime($day))	. "."; }
+	} else { $output = $output . sprintf(__("There's nobody in the studio on %s.", 'whos-in-today'), date("l",WITDropToTime($day))); }
 	
 	$output = $output . "</div>";
 	
@@ -274,8 +249,10 @@ function whos_in_today_heatmap_shortcode() {
 	
 global $wpdb;
 
-	$tablename = $wpdb->prefix."whosintoday";	
-	$entriesList = $wpdb->get_results("SELECT * FROM ".$tablename." WHERE `day` >= '" . date("Y-m-d",WITBeginWeek(time())) . "' AND `day` < '" . date("Y-m-d",WITBeginWeek(time() + 1209600)) . "' AND `location` = 'Studio' order by day, location, userid");
+	$tablename = $wpdb->prefix."whosintoday";
+	$start_date = date("Y-m-d",WITBeginWeek(time()));
+	$end_date = date("Y-m-d",WITBeginWeek(time() + 1209600));
+	$entriesList = $wpdb->get_results($wpdb->prepare("SELECT * FROM ".$tablename." WHERE `day` >= %s AND `day` < %s AND `location` = 'Studio' order by day, location, userid", $start_date, $end_date));
 	
 	$array_location = array();
 	
@@ -298,18 +275,19 @@ global $wpdb;
 								<tr>";
 			
 		while ( $count <= 14) {
-			
-			$howmanyintoday = count($array_count_locations[date("Y-m-d",$daycount)]);
-			
-			if (date("Y-m-d",$daycount) == date("Y-m-d",time())) { $border = " WITheatmap-today"; } else { unset($border); }
-			
-			if (date("w",$daycount) != 0 && date("w",$daycount) != 6) { $output = $output . "<td class='WITheatmap" . $border . "' onmouseover=\"ShowLocations('" . date("Y-m-d",$daycount) . "_studio')\" onmouseout=\"HideLocations('" . date("Y-m-d",$daycount) . "_studio')\">" . WITPopUp(date("Y-m-d",$daycount)) . date("d",$daycount) . "</td>"; }
-			
+
+			$current_date = date("Y-m-d",$daycount);
+			$howmanyintoday = isset($array_count_locations[$current_date]) ? $array_count_locations[$current_date] : 0;
+
+			if (date("Y-m-d",$daycount) == date("Y-m-d",time())) { $border = " WITheatmap-today"; } else { $border = ''; }
+
+			if (date("w",$daycount) != 0 && date("w",$daycount) != 6) { $output = $output . "<td class='WITheatmap" . esc_attr($border) . "' onmouseover=\"ShowLocations('" . esc_js(date("Y-m-d",$daycount)) . "_studio')\" onmouseout=\"HideLocations('" . esc_js(date("Y-m-d",$daycount)) . "_studio')\">" . WITPopUp(date("Y-m-d",$daycount)) . esc_html(date("d",$daycount)) . "</td>"; }
+
 			if ($count == 7) { $output = $output .  "</tr><tr>"; }
-			
+
 			$count++;
 			$daycount = $daycount + 86400;
-			
+
 		}
 		
 		$output = $output .  "</tr></table></div>";
@@ -322,9 +300,9 @@ global $wpdb;
 function WITCheckThisUserArray($user_id) {
 	
 	global $wpdb;
-	
-	$tablename = $wpdb->prefix."whosintoday";	
-	$entriesList = $wpdb->get_results("SELECT * FROM ".$tablename." WHERE `userid` = " . intval($user_id) . " order by day, location");
+
+	$tablename = $wpdb->prefix."whosintoday";
+	$entriesList = $wpdb->get_results($wpdb->prepare("SELECT * FROM ".$tablename." WHERE `userid` = %d order by day, location", intval($user_id)));
 	
 	$output = array();
 		
@@ -339,8 +317,14 @@ function WITCheckThisUserArray($user_id) {
 }
 
 function whos_in_today_grid_shortcode() {
-	
-	if(isset($_POST['wit_submit_table'])){ WITSubmit($_POST); }
+
+	if(isset($_POST['wit_submit_table'])){
+		// Verify nonce for security
+		if (!isset($_POST['wit_submit_nonce']) || !wp_verify_nonce($_POST['wit_submit_nonce'], 'wit_submit_table')) {
+			return '<div class="error">Security check failed</div>';
+		}
+		WITSubmit($_POST);
+	}
 	
 	global $WITLocations;
 	
@@ -367,16 +351,24 @@ function whos_in_today_grid_shortcode() {
 	$array_of_bank_holidays = WITBankHolidayArray();
 
 		$output = "<div>";
-		
-		if ($user_name) { $output = $output . "<h2>" . $user_name . "</h2>"; }
-		
-		$output = $output . "<form action='' method='post'><table class=\"wp-list-table widefat fixed striped table-view-list\"><tr>";
+
+		if ($user_name) { $output = $output . "<h2>" . esc_html($user_name) . "</h2>"; }
+
+		$output = $output . "<form action='' method='post'>";
+		ob_start();
+		wp_nonce_field('wit_submit_table', 'wit_submit_nonce');
+		$output = $output . ob_get_clean();
+		$output = $output . "<table class=\"wp-list-table widefat fixed striped table-view-list\"><tr>";
 			
 		while ( $count <= 14) {
-			
-			$howmanyintoday = count($array_count_locations[date("Y-m-d",$daycount)]);
-			
-			if (date("w",$daycount) != 0 && date("w",$daycount) != 6) { $output = $output . "<td id=\"wit_" . date("Y-m-d",$daycount) . "\" style='text-align: left; background: rgba(19,110,191," . round ( $howmanyintoday / $total_users['total_users'] , 1) . "); vertical-align: top;'><p><strong>" . date("D d M Y",$daycount) . "</strong></p>";
+
+			$current_date = date("Y-m-d",$daycount);
+			$array_count_locations = isset($array_count_locations) ? $array_count_locations : array();
+			$total_users = isset($total_users) ? $total_users : array('total_users' => 1);
+			$howmanyintoday = isset($array_count_locations[$current_date]) ? count($array_count_locations[$current_date]) : 0;
+			$total_users_count = isset($total_users['total_users']) ? $total_users['total_users'] : 1;
+
+			if (date("w",$daycount) != 0 && date("w",$daycount) != 6) { $output = $output . "<td id=\"wit_" . esc_attr(date("Y-m-d",$daycount)) . "\" style='text-align: left; background: rgba(19,110,191," . esc_attr(round ( $howmanyintoday / $total_users_count , 1)) . "); vertical-align: top;'><p><strong>" . esc_html(date("D d M Y",$daycount)) . "</strong></p>";
 			
 			
 			
@@ -389,14 +381,14 @@ function whos_in_today_grid_shortcode() {
 					if (date("Y-m-d",$daycount) >=  date("Y-m-d",time())) {
 					
 						$output = $output . "
-						<input type='radio' value='" . $check_string . "' name='" . date("Y-m-d",$daycount) . "' ";
+						<input type='radio' value='" . esc_attr($check_string) . "' name='" . esc_attr(date("Y-m-d",$daycount)) . "' ";
 												
 						if ( in_array($check_string,$array_of_user_days)) { $output = $output . " checked=\"checked\" "; }
 						
 						$output = $output . " class=\"WITselect\" />
-						<label for='" . $current_user . "'>" . $location . "</label><br />";
+						<label for='" . esc_attr($current_user) . "'>" . esc_html($location) . "</label><br />";
 						
-					} elseif ( in_array($check_string,$array_of_user_days)) { $output = $output . "<span style='padding: 3px 12px 3px 12px; background: #136ebf; height: 20px; border-radius: 10px; font-size: 0.9em; line-height: 30px; color: white;'>" . $location . "</span> ";; }
+					} elseif ( in_array($check_string,$array_of_user_days)) { $output = $output . "<span style='padding: 3px 12px 3px 12px; background: #136ebf; height: 20px; border-radius: 10px; font-size: 0.9em; line-height: 30px; color: white;'>" . esc_html($location) . "</span> ";; }
 					
 				}
 				
@@ -425,10 +417,11 @@ function WITDaysArray($time) {
 	if (!$time) { $time = time(); }
 
 	$tablename = $wpdb->prefix."whosintoday";
-	
-	$sql = "SELECT * FROM `".$tablename."` WHERE `day` >= '" . date("Y-m-d",WITBeginWeek(time())) . "' AND `day` < '" . date("Y-m-d",WITBeginWeek(time() + 1209600)) . "'";
-	
-	$tablename = $wpdb->prefix."whosintoday";
+
+	$start_date = date("Y-m-d",WITBeginWeek(time()));
+	$end_date = date("Y-m-d",WITBeginWeek(time() + 1209600));
+	$sql = $wpdb->prepare("SELECT * FROM `".$tablename."` WHERE `day` >= %s AND `day` < %s", $start_date, $end_date);
+
 	$entriesList = $wpdb->get_results($sql);
 	
 	//echo "<p><code>" . $sql . "</code></p>";
@@ -479,46 +472,54 @@ function WITSelect($selected) {
 }
 
 function WITSubmit($array) {
-	
+
 	foreach ($array AS $item) {
-		
+
+		// Sanitize input
+		$item = sanitize_text_field($item);
 		$string = explode ("|",$item);
-		$day = $string[0];
-		$location = $string[1];
-		$userid = $string[2];
-		
-		if (count($string) == 3) { WITCheckExisting($day,$userid,$location); }		
-		
+
+		if (count($string) == 3) {
+			$day = sanitize_text_field($string[0]);
+			$location = sanitize_text_field($string[1]);
+			$userid = intval($string[2]);
+
+			// Validate date format (Y-m-d)
+			if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $day)) {
+				WITCheckExisting($day,$userid,$location);
+			}
+		}
+
 	}
-	
+
 }
 
 function WITCheckExisting($day,$userid,$location) {
-	
+
 global $wpdb;
 
 $tablename = $wpdb->prefix."whosintoday";
-	
+
  if($userid != '' && $day != ''){
-	 
-		$query = "SELECT `day` FROM ". $tablename . " WHERE `day` = '" . $day . "' AND `userid` = " . intval($userid) . " LIMIT 1";
-		
+
+		$query = $wpdb->prepare("SELECT `day` FROM ". $tablename . " WHERE `day` = %s AND `userid` = %d LIMIT 1", $day, intval($userid));
+
 	//	echo "<p><code>" . $query . "</code></p>";
 
 		$check_data = $wpdb->get_results($query);
 					if(count($check_data) == 1){
-					  $insert_sql = "UPDATE `".$tablename."` SET `userid` = " . intval($userid) . ", `day` = '" . $day . "', `location` = '" . $location . "' WHERE `day` = '" . $day . "' AND `userid` = " . intval($userid) . " AND `location` != '" . $location . "' LIMIT 1";
-					  
+					  $insert_sql = $wpdb->prepare("UPDATE `".$tablename."` SET `userid` = %d, `day` = %s, `location` = %s WHERE `day` = %s AND `userid` = %d AND `location` != %s LIMIT 1", intval($userid), $day, $location, $day, intval($userid), $location);
+
 					} else {
-					
-					$insert_sql = "INSERT INTO ".$tablename."(userid,day,location) values (". intval($userid) .",'".$day."','".$location."') ";
-					
+
+					$insert_sql = $wpdb->prepare("INSERT INTO ".$tablename."(userid,day,location) values (%d,%s,%s)", intval($userid), $day, $location);
+
 					}
-					
+
 				$wpdb->query($insert_sql);
-				
+
 			}
-							
+
 			//echo "<p><code>" . $insert_sql . "</code></p>";
 
 }
@@ -527,7 +528,8 @@ function WITHowManyInToday($location) {
 	
 	global $wpdb;
 	$tablename = $wpdb->prefix."whosintoday";
-	$query = "SELECT count(`userid`) AS `quantity`, `day` FROM ". $tablename . " WHERE `day` >= '" . WITBeginWeek(time()) . "'";
+	$week_start = date("Y-m-d", WITBeginWeek(time()));
+	$query = $wpdb->prepare("SELECT count(`userid`) AS `quantity`, `day` FROM ". $tablename . " WHERE `day` >= %s", $week_start);
 	$entriesList = $wpdb->get_results($query);
 	
 	$date_array = array();
@@ -545,57 +547,134 @@ function WITHowManyInToday($location) {
 }
 
 function WITDropToTime($day) {
-	
-	
-	
+
+	// Convert Y-m-d date string to Unix timestamp
+	$date_array = explode("-", $day);
+	if (count($date_array) == 3) {
+		return mktime(0, 0, 0, intval($date_array[1]), intval($date_array[2]), intval($date_array[0]));
+	}
+	return time();
+
 }
 
 function WITListBankHolidays() {
-	
-	echo "<div class=\"wrap\"><h1>Bank Holidays</h1>";
+
+	// Check user capabilities
+	if (!current_user_can('manage_options')) {
+		wp_die(__('You do not have sufficient permissions to access this page.'));
+	}
+
+	echo "<div class=\"wrap\"><h1>" . esc_html__('Bank Holidays', 'whos-in-today') . "</h1>";
 	global $wpdb;
 	$tablename = $wpdb->prefix."whosintoday_bankholidays";
-	$query = "SELECT * FROM ". $tablename . " WHERE `bankholiday` > '" . date("Y-m-d",time()) . "' ORDER BY `bankholiday` ASC";
-	$entriesList = $wpdb->get_results($query);
-	
-	if(count($entriesList) > 0){
-		
-		echo "<div><table class=\"wp-list-table widefat fixed striped table-view-list\"><tr><th>Date</th><th>Name</th><th colspan=\"2\">Added By</th></tr>";
-		
-		echo "<tr><form method='post' action=''><td><input type='text' name='name' required='required' /><input type='hidden' name='added_by' value='" . get_current_user_id() . "' /></td><td colspan='2'><input type='date' name='bankholiday' value='" . date("Y-m-d",time()) . "' /></td><td><input type='submit' value='Add' class='button' name='but_add_bh' /></td></form></tr>";
-		
-		foreach( $entriesList as $entry ) {
-			
-			$user_info = get_userdata( $entry->added_by );
+	$today = date("Y-m-d",time());
 
-			echo "<tr><td>" . $entry->name . "</td><td>" . WITTidyDate($entry->bankholiday) . "</td><td>" . $user_info->first_name . "&nbsp;" . $user_info->last_name . "</td><td><button href=\"\" class='button'>Delete</button></td></tr>";
-			
+	// Get upcoming bank holidays
+	$query_upcoming = $wpdb->prepare("SELECT * FROM ". $tablename . " WHERE `bankholiday` >= %s ORDER BY `bankholiday` ASC", $today);
+	$upcomingEntries = $wpdb->get_results($query_upcoming);
+
+	// Get the most recent past bank holiday
+	$query_past = $wpdb->prepare("SELECT * FROM ". $tablename . " WHERE `bankholiday` < %s ORDER BY `bankholiday` DESC LIMIT 1", $today);
+	$pastEntry = $wpdb->get_results($query_past);
+
+	// Always show the table with add form
+	echo "<div><table class=\"wp-list-table widefat fixed striped table-view-list\"><tr><th>Name</th><th>Date</th><th colspan=\"2\">Added By</th></tr>";
+
+	// Add form - always visible
+	echo "<tr><form method='post' action=''>";
+	wp_nonce_field('wit_add_bank_holiday', 'wit_bank_holiday_nonce');
+	echo "<td><input type='text' name='name' placeholder='" . esc_attr__('Bank Holiday Name', 'whos-in-today') . "' required='required' /></td><td colspan='2'><input type='date' name='bankholiday' value='" . esc_attr(date("Y-m-d",time())) . "' /></td><td><input type='submit' value='" . esc_attr__('Add', 'whos-in-today') . "' class='button button-primary' name='but_add_bh' /></td></form></tr>";
+
+	// Display most recent past bank holiday if it exists
+	if(count($pastEntry) > 0){
+		echo "<tr class='wit-past-holiday' style='opacity: 0.6;'><td colspan='4'><strong>" . esc_html__('Most Recent Past Bank Holiday', 'whos-in-today') . "</strong></td></tr>";
+		foreach( $pastEntry as $entry ) {
+			$user_info = get_userdata( $entry->added_by );
+			$display_name = ($user_info && $user_info->first_name && $user_info->last_name) ? $user_info->first_name . "&nbsp;" . $user_info->last_name : ($user_info ? $user_info->user_login : 'Unknown User');
+
+			$delete_url = wp_nonce_url(admin_url('admin.php?page=bankholidays&delete_bh=' . $entry->id), 'delete_bank_holiday_' . $entry->id);
+
+			echo "<tr style='opacity: 0.6;'><td>" . esc_html($entry->name) . "</td><td>" . esc_html(WITTidyDate($entry->bankholiday)) . "</td><td>" . esc_html($display_name) . "</td><td><a href='" . esc_url($delete_url) . "' class='button'>Delete</a></td></tr>";
 		}
-		
-		echo "</table></div>";
-	
-	} else { echo "<p>No entries found</p>"; }
-	
+	}
+
+	// Display upcoming entries if any
+	if(count($upcomingEntries) > 0){
+		echo "<tr><td colspan='4'><strong>" . esc_html__('Upcoming Bank Holidays', 'whos-in-today') . "</strong></td></tr>";
+		foreach( $upcomingEntries as $entry ) {
+
+			$user_info = get_userdata( $entry->added_by );
+			$display_name = ($user_info && $user_info->first_name && $user_info->last_name) ? $user_info->first_name . "&nbsp;" . $user_info->last_name : ($user_info ? $user_info->user_login : 'Unknown User');
+
+			$delete_url = wp_nonce_url(admin_url('admin.php?page=bankholidays&delete_bh=' . $entry->id), 'delete_bank_holiday_' . $entry->id);
+
+			echo "<tr><td>" . esc_html($entry->name) . "</td><td>" . esc_html(WITTidyDate($entry->bankholiday)) . "</td><td>" . esc_html($display_name) . "</td><td><a href='" . esc_url($delete_url) . "' class='button'>Delete</a></td></tr>";
+
+		}
+	} else {
+		echo "<tr><td colspan='4'>" . esc_html__('No upcoming bank holidays found. Add one using the form above.', 'whos-in-today') . "</td></tr>";
+	}
+
+	echo "</table></div>";
+
 	echo "</div>";
 	
 }
 
 function WITAddBankHoliday() {
-	
+
+	// Check user capabilities
+	if (!current_user_can('manage_options')) {
+		wp_die(__('You do not have sufficient permissions to access this page.'));
+	}
+
 global $wpdb;
 
 $tablename = $wpdb->prefix."whosintoday_bankholidays";
-	
-		$query = "SELECT `bankholiday` FROM `". $tablename . "` WHERE `bankholiday` = '" . $_POST['bankholiday'] . "' LIMIT 1";
+
+		$bankholiday_date = sanitize_text_field($_POST['bankholiday']);
+		$added_by = get_current_user_id(); // Use current user ID instead of POST data
+		$name = sanitize_text_field($_POST['name']);
+
+		// Validate date format (Y-m-d) and that it's a valid date
+		if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $bankholiday_date)) {
+			wp_die('Invalid date format');
+		}
+
+		// Verify it's an actual valid date
+		$date_parts = explode('-', $bankholiday_date);
+		if (!checkdate(intval($date_parts[1]), intval($date_parts[2]), intval($date_parts[0]))) {
+			wp_die('Invalid date');
+		}
+
+		$query = $wpdb->prepare("SELECT `bankholiday` FROM `". $tablename . "` WHERE `bankholiday` = %s LIMIT 1", $bankholiday_date);
 		$entriesList = $wpdb->get_results($query);
-		
+
 		if(count($entriesList) == 0){
 
-			  $insert_sql = "INSERT INTO `".$tablename."` (`id`,`added_by`,`name`,`bankholiday`) VALUES (NULL," . intval($_POST['added_by']) . ",'" . addslashes($_POST['name']) . "','" . $_POST['bankholiday'] . "')";
-			  $sql = $wpdb->get_results($insert_sql);
-			  
+			  $insert_sql = $wpdb->prepare("INSERT INTO `".$tablename."` (`id`,`added_by`,`name`,`bankholiday`) VALUES (NULL,%d,%s,%s)", $added_by, $name, $bankholiday_date);
+			  $wpdb->query($insert_sql);
+
 		}
-	
+
+}
+
+function WITDeleteBankHoliday($id) {
+
+	// Check user capabilities
+	if (!current_user_can('manage_options')) {
+		wp_die(__('You do not have sufficient permissions to access this page.'));
+	}
+
+	global $wpdb;
+	$tablename = $wpdb->prefix."whosintoday_bankholidays";
+
+	$wpdb->query($wpdb->prepare("DELETE FROM `".$tablename."` WHERE `id` = %d", $id));
+
+	// Redirect back to bank holidays page
+	wp_redirect(admin_url('admin.php?page=bankholidays'));
+	exit;
+
 }
 
 function whos_in_today_next_bank_holiday() {
@@ -603,8 +682,9 @@ function whos_in_today_next_bank_holiday() {
 global $wpdb;
 
 $tablename = $wpdb->prefix."whosintoday_bankholidays";
-	
-		$query = "SELECT * FROM `". $tablename . "` WHERE `bankholiday` >= '" . date("Y-m-d",time()) . "' ORDER BY `bankholiday` ASC LIMIT 1";
+	$today = date("Y-m-d",time());
+
+		$query = $wpdb->prepare("SELECT * FROM `". $tablename . "` WHERE `bankholiday` >= %s ORDER BY `bankholiday` ASC LIMIT 1", $today);
 		$entriesList = $wpdb->get_results($query);
 		
 		if(count($entriesList) > 0){
@@ -613,7 +693,7 @@ $tablename = $wpdb->prefix."whosintoday_bankholidays";
 			
 			foreach( $entriesList as $entry ) {
 
-			  $output = $output . "<div><p>The next bank holiday is " . $entry->name . " on " . WITTidyDate($entry->bankholiday) . ".</p></div>";
+			  $output = $output . "<div><p>" . sprintf(__('The next bank holiday is %s on %s.', 'whos-in-today'), esc_html($entry->name), esc_html(WITTidyDate($entry->bankholiday))) . "</p></div>";
 			  
 			}
 			
@@ -653,51 +733,52 @@ function WITGetBankHoliday($bankholiday) {
 	global $wpdb;
 
 	$tablename = $wpdb->prefix."whosintoday_bankholidays";
-	$query = "SELECT * FROM `" . $tablename . "` WHERE `bankholiday` = '" . $bankholiday . "' LIMIT 1";
+	$query = $wpdb->prepare("SELECT * FROM `" . $tablename . "` WHERE `bankholiday` = %s LIMIT 1", $bankholiday);
 	$entriesList = $wpdb->get_results($query);
+	$output = '';
 	foreach( $entriesList as $entry ) { $output = $entry->name; }
-	return "<p>" . $output . "</p>";
+	return "<p>" . esc_html($output) . "</p>";
 	
 	
 }
 
 function WITCalendar() {
-	
-	$week_begin = WITBeginWeek ( mktime(12,0,0,intval(date("n",time())),1,intval(date("y",time()))) );
-	
+
+	$week_begin = WITBeginWeek ( mktime(12,0,0,intval(date("n",time())),1,intval(date("Y",time()))) );
+
 	$counter = 1;
-	
+
 	$bank_holiday_array = WITBankHolidayArray();
-	
+
 	$location_array = WITDaysArray($week_begin);
-	
-	echo "<h2>Calendar</h2>";
-	
+
+	echo "<h2>" . esc_html__('Calendar', 'whos-in-today') . "</h2>";
+
 	echo "<table class='wp-list-table widefat fixed table-view-list'><tr>";
-	
+
 	while ($counter <= 35) {
-		
-		$day_key = array_search(date("Y-m-d",$week_begin),$location_array[0]);
-		
+
+		$day_key = array_search(date("Y-m-d",$week_begin), isset($location_array[0]) ? $location_array[0] : array());
+
 		echo "<td>";
 		echo date("l, j F",$week_begin);
-		if ($day_key > 0) { echo $day_key; }
+		if ($day_key !== false && $day_key > 0) { echo $day_key; }
 		echo "</td>";
-		
-		if (in_array(date("Y-m-d",$week_begin))) { echo WITGetBankHoliday(date("Y-m-d",$week_begin)); }
-		
+
+		if (in_array(date("Y-m-d",$week_begin), $bank_holiday_array)) { echo WITGetBankHoliday(date("Y-m-d",$week_begin)); }
+
 		if ($counter == 7 OR $counter == 14 OR $counter == 21 OR $counter == 28) { echo "</tr><tr>"; }
-		
+
 		$counter++;
-		
+
 		$week_begin = $week_begin + 86400;
-		
+
 	}
-	
+
 	echo "</tr></table>";
 
-	
+
 	echo "<p>Beginning of the first week of the month is " . date("Y-m-d",$week_begin) . "</p>";
-	
-	
+
+
 }

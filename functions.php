@@ -5,9 +5,34 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-// Define global locations array
+// Define global locations array - load from database
+function WITGetLocations() {
+    global $wpdb;
+    $tablename = $wpdb->prefix."whosintoday_locations";
+
+    // Check if table exists
+    if ($wpdb->get_var("SHOW TABLES LIKE '$tablename'") != $tablename) {
+        // Fallback to hardcoded array if table doesn't exist yet
+        return array('Studio','Home','Holiday','Elsewhere','Unpaid Leave','Absent','Isolating');
+    }
+
+    $locations = $wpdb->get_results("SELECT location_name FROM " . $tablename . " ORDER BY display_order ASC, location_name ASC");
+    $location_array = array();
+    foreach ($locations as $location) {
+        $location_array[] = $location->location_name;
+    }
+
+    // If no locations in database, return default
+    if (empty($location_array)) {
+        return array('Studio','Home','Holiday','Elsewhere','Unpaid Leave','Absent','Isolating');
+    }
+
+    return $location_array;
+}
+
+// Initialize global locations array
 if (!isset($GLOBALS['WITLocations'])) {
-    $GLOBALS['WITLocations'] = array('Studio','Home','Holiday','Elsewhere','Unpaid Leave','Absent','Isolating');
+    $GLOBALS['WITLocations'] = WITGetLocations();
 }
 
 function WIT_CMAP_API() {
@@ -325,8 +350,9 @@ function whos_in_today_grid_shortcode() {
 		}
 		WITSubmit($_POST);
 	}
-	
-	global $WITLocations;
+
+	// Load locations dynamically from database
+	$WITLocations = WITGetLocations();
 	
 	
 	
@@ -456,9 +482,10 @@ function WITCheckInArray($search_array,$day,$location,$userid) {
 }
 
 function WITSelect($selected) {
-	
-	global $WITLocations;
-	
+
+	// Load locations dynamically from database
+	$WITLocations = WITGetLocations();
+
 	foreach ($WITLocations AS $location) {
 		
 		echo "<option value=\"" . $location . "\"";
@@ -781,4 +808,509 @@ function WITCalendar() {
 	echo "<p>Beginning of the first week of the month is " . date("Y-m-d",$week_begin) . "</p>";
 
 
+}
+
+function WITListLocations() {
+
+	// Check user capabilities
+	if (!current_user_can('manage_options')) {
+		wp_die(__('You do not have sufficient permissions to access this page.'));
+	}
+
+	echo "<div class=\"wrap\"><h1>" . esc_html__('Manage Locations', 'whos-in-today') . "</h1>";
+	echo "<p>" . esc_html__('Add, edit, and remove location types. Drag and drop to reorder locations.', 'whos-in-today') . "</p>";
+
+	global $wpdb;
+	$tablename = $wpdb->prefix."whosintoday_locations";
+
+	// Check if we're editing a location
+	$editing_id = isset($_GET['edit_location']) ? intval($_GET['edit_location']) : 0;
+	$editing_location = null;
+
+	if ($editing_id > 0) {
+		$editing_location = $wpdb->get_row($wpdb->prepare("SELECT * FROM " . $tablename . " WHERE id = %d", $editing_id));
+	}
+
+	$locationsList = $wpdb->get_results("SELECT * FROM " . $tablename . " ORDER BY display_order ASC, location_name ASC");
+
+	// Always show the table with add/edit form
+	echo "<div><table class=\"wp-list-table widefat fixed striped table-view-list\"><thead><tr><th style='width: 40px;'></th><th>Location Name</th><th colspan=\"2\">Actions</th></tr></thead>";
+
+	// Add/Edit form - always visible
+	echo "<tbody>";
+	if ($editing_location) {
+		echo "<tr style='background-color: #fffbcc;'><td></td><form method='post' action=''>";
+		wp_nonce_field('wit_edit_location_' . $editing_id, 'wit_edit_location_nonce');
+		echo "<input type='hidden' name='location_id' value='" . esc_attr($editing_id) . "' />";
+		echo "<td><input type='text' name='location_name' value='" . esc_attr($editing_location->location_name) . "' placeholder='" . esc_attr__('Location Name', 'whos-in-today') . "' required='required' style='width: 100%;' /></td>";
+		echo "<td colspan='2'><input type='submit' value='" . esc_attr__('Update', 'whos-in-today') . "' class='button button-primary' name='but_edit_location' /> <a href='" . esc_url(admin_url('admin.php?page=wit_locations')) . "' class='button'>" . esc_html__('Cancel', 'whos-in-today') . "</a></td></form></tr>";
+	} else {
+		echo "<tr><td></td><form method='post' action=''>";
+		wp_nonce_field('wit_add_location', 'wit_location_nonce');
+		echo "<td><input type='text' name='location_name' placeholder='" . esc_attr__('New Location Name', 'whos-in-today') . "' required='required' style='width: 100%;' /></td>";
+		echo "<td colspan='2'><input type='submit' value='" . esc_attr__('Add Location', 'whos-in-today') . "' class='button button-primary' name='but_add_location' /></td></form></tr>";
+	}
+	echo "</tbody>";
+
+	// Display existing locations
+	if(count($locationsList) > 0){
+		echo "<tbody id='wit-sortable-locations'>";
+		foreach( $locationsList as $location ) {
+
+			$edit_url = admin_url('admin.php?page=wit_locations&edit_location=' . $location->id);
+			$delete_url = wp_nonce_url(admin_url('admin.php?page=wit_locations&delete_location=' . $location->id), 'delete_location_' . $location->id);
+
+			echo "<tr data-location-id='" . esc_attr($location->id) . "' style='cursor: move;'>";
+			echo "<td style='text-align: center;'><span class='dashicons dashicons-menu' style='color: #999;'></span></td>";
+			echo "<td><strong>" . esc_html($location->location_name) . "</strong></td>";
+			echo "<td><a href='" . esc_url($edit_url) . "' class='button'>Edit</a></td>";
+			echo "<td><a href='" . esc_url($delete_url) . "' class='button' onclick='return confirm(\"" . esc_js(__('Are you sure you want to delete this location? This action cannot be undone.', 'whos-in-today')) . "\");'>Delete</a></td></tr>";
+
+		}
+		echo "</tbody>";
+	} else {
+		echo "<tbody><tr><td colspan='4'>" . esc_html__('No locations found. Add one using the form above.', 'whos-in-today') . "</td></tr></tbody>";
+	}
+
+	echo "</table></div>";
+
+	// Add JavaScript for sortable functionality
+	?>
+	<script type="text/javascript">
+	jQuery(document).ready(function($) {
+		$('#wit-sortable-locations').sortable({
+			handle: '.dashicons-menu',
+			opacity: 0.7,
+			cursor: 'move',
+			axis: 'y',
+			update: function(event, ui) {
+				var order = [];
+				$('#wit-sortable-locations tr').each(function(index) {
+					var locationId = $(this).data('location-id');
+					if (locationId) {
+						order.push({
+							id: locationId,
+							order: index
+						});
+					}
+				});
+
+				// Send AJAX request to update order
+				$.post(ajaxurl, {
+					action: 'wit_update_location_order',
+					nonce: '<?php echo wp_create_nonce('wit_update_location_order'); ?>',
+					order: order
+				}, function(response) {
+					if (response.success) {
+						// Optional: show success message
+						console.log('Location order updated');
+					}
+				});
+			}
+		});
+		$('#wit-sortable-locations').disableSelection();
+	});
+	</script>
+	<style>
+	#wit-sortable-locations tr.ui-sortable-helper {
+		background-color: #f0f0f1;
+		box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+	}
+	#wit-sortable-locations tr:hover {
+		background-color: #f6f7f7;
+	}
+	</style>
+	<?php
+
+	echo "</div>";
+
+}
+
+function WITAddLocation() {
+
+	// Check user capabilities
+	if (!current_user_can('manage_options')) {
+		wp_die(__('You do not have sufficient permissions to access this page.'));
+	}
+
+	global $wpdb;
+
+	$tablename = $wpdb->prefix."whosintoday_locations";
+
+	$location_name = sanitize_text_field($_POST['location_name']);
+	$display_order = isset($_POST['display_order']) ? intval($_POST['display_order']) : 0;
+
+	// Validate location name is not empty
+	if (empty($location_name)) {
+		wp_die('Location name cannot be empty');
+	}
+
+	// Check if location already exists
+	$query = $wpdb->prepare("SELECT id FROM " . $tablename . " WHERE location_name = %s LIMIT 1", $location_name);
+	$existing = $wpdb->get_results($query);
+
+	if(count($existing) == 0){
+		$insert_sql = $wpdb->prepare("INSERT INTO " . $tablename . " (location_name, display_order) VALUES (%s, %d)", $location_name, $display_order);
+		$wpdb->query($insert_sql);
+	}
+
+	// Redirect back to locations page
+	wp_redirect(admin_url('admin.php?page=wit_locations'));
+	exit;
+
+}
+
+function WITEditLocation() {
+
+	// Check user capabilities
+	if (!current_user_can('manage_options')) {
+		wp_die(__('You do not have sufficient permissions to access this page.'));
+	}
+
+	global $wpdb;
+
+	$tablename = $wpdb->prefix."whosintoday_locations";
+
+	$location_id = intval($_POST['location_id']);
+	$location_name = sanitize_text_field($_POST['location_name']);
+	$display_order = isset($_POST['display_order']) ? intval($_POST['display_order']) : 0;
+
+	// Validate location name is not empty
+	if (empty($location_name)) {
+		wp_die('Location name cannot be empty');
+	}
+
+	// Update the location
+	$update_sql = $wpdb->prepare("UPDATE " . $tablename . " SET location_name = %s, display_order = %d WHERE id = %d", $location_name, $display_order, $location_id);
+	$wpdb->query($update_sql);
+
+	// Redirect back to locations page
+	wp_redirect(admin_url('admin.php?page=wit_locations'));
+	exit;
+
+}
+
+function WITDeleteLocation($id) {
+
+	// Check user capabilities
+	if (!current_user_can('manage_options')) {
+		wp_die(__('You do not have sufficient permissions to access this page.'));
+	}
+
+	global $wpdb;
+	$tablename = $wpdb->prefix."whosintoday_locations";
+
+	$wpdb->query($wpdb->prepare("DELETE FROM " . $tablename . " WHERE id = %d", $id));
+
+	// Redirect back to locations page
+	wp_redirect(admin_url('admin.php?page=wit_locations'));
+	exit;
+
+}
+
+function WITAdminCalendar() {
+
+	// Check user capabilities
+	if (!current_user_can('manage_options')) {
+		wp_die(__('You do not have sufficient permissions to access this page.'));
+	}
+
+	global $wpdb;
+	$tablename = $wpdb->prefix."whosintoday";
+
+	// Get current month/year or from GET params
+	$current_month = isset($_GET['wit_month']) ? intval($_GET['wit_month']) : intval(date('n'));
+	$current_year = isset($_GET['wit_year']) ? intval($_GET['wit_year']) : intval(date('Y'));
+
+	// Calculate navigation dates
+	$prev_month = $current_month - 1;
+	$prev_year = $current_year;
+	if ($prev_month < 1) {
+		$prev_month = 12;
+		$prev_year--;
+	}
+
+	$next_month = $current_month + 1;
+	$next_year = $current_year;
+	if ($next_month > 12) {
+		$next_month = 1;
+		$next_year++;
+	}
+
+	// Get first and last day of month
+	$first_day = mktime(0, 0, 0, $current_month, 1, $current_year);
+	$days_in_month = intval(date('t', $first_day));
+	$last_day = mktime(23, 59, 59, $current_month, $days_in_month, $current_year);
+
+	// Get day of week for first day (0=Sunday, 1=Monday, etc.)
+	$first_day_of_week = intval(date('w', $first_day));
+	// Adjust so Monday = 0
+	$first_day_of_week = ($first_day_of_week == 0) ? 6 : $first_day_of_week - 1;
+
+	// Fetch all entries for this month
+	$start_date = date('Y-m-d', $first_day);
+	$end_date = date('Y-m-d', $last_day);
+	$entries = $wpdb->get_results($wpdb->prepare(
+		"SELECT * FROM " . $tablename . " WHERE `day` >= %s AND `day` <= %s ORDER BY day ASC, userid ASC",
+		$start_date,
+		$end_date
+	));
+
+	// Organize entries by day
+	$entries_by_day = array();
+	foreach ($entries as $entry) {
+		$day_key = $entry->day;
+		if (!isset($entries_by_day[$day_key])) {
+			$entries_by_day[$day_key] = array();
+		}
+		$entries_by_day[$day_key][] = $entry;
+	}
+
+	// Fetch bank holidays for this month
+	$bh_tablename = $wpdb->prefix."whosintoday_bankholidays";
+	$bank_holidays = $wpdb->get_results($wpdb->prepare(
+		"SELECT * FROM " . $bh_tablename . " WHERE `bankholiday` >= %s AND `bankholiday` <= %s ORDER BY bankholiday ASC",
+		$start_date,
+		$end_date
+	));
+
+	// Organize bank holidays by day
+	$bank_holidays_by_day = array();
+	foreach ($bank_holidays as $bh) {
+		$bank_holidays_by_day[$bh->bankholiday] = $bh->name;
+	}
+
+	// Pre-load all users
+	$user_ids = array_unique(array_column($entries, 'userid'));
+	$users_cache = array();
+	if (!empty($user_ids)) {
+		$users = get_users(array('include' => $user_ids));
+		foreach ($users as $user) {
+			$users_cache[$user->ID] = $user;
+		}
+	}
+
+	// Navigation
+	$prev_url = admin_url('admin.php?page=WhosInToday&wit_month=' . $prev_month . '&wit_year=' . $prev_year);
+	$next_url = admin_url('admin.php?page=WhosInToday&wit_month=' . $next_month . '&wit_year=' . $next_year);
+	$today_url = admin_url('admin.php?page=WhosInToday');
+
+	echo '<div class="wit-calendar-nav" style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">';
+	echo '<a href="' . esc_url($prev_url) . '" class="button">&larr; ' . esc_html__('Previous Month', 'whos-in-today') . '</a>';
+	echo '<h2 style="margin: 0;">' . esc_html(date('F Y', $first_day)) . '</h2>';
+	echo '<div>';
+	echo '<a href="' . esc_url($today_url) . '" class="button" style="margin-right: 10px;">' . esc_html__('Today', 'whos-in-today') . '</a>';
+	echo '<a href="' . esc_url($next_url) . '" class="button">' . esc_html__('Next Month', 'whos-in-today') . ' &rarr;</a>';
+	echo '</div>';
+	echo '</div>';
+
+	// Calendar grid
+	echo '<table class="wit-calendar-table" style="width: 100%; border-collapse: collapse; table-layout: fixed;">';
+	echo '<thead><tr>';
+	$weekdays = array('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun');
+	foreach ($weekdays as $day) {
+		echo '<th style="padding: 10px; text-align: center; border: 1px solid #ddd; background-color: #f9f9f9;">' . esc_html__($day, 'whos-in-today') . '</th>';
+	}
+	echo '</tr></thead><tbody>';
+
+	// Fill in the calendar
+	$day_counter = 1;
+	$current_day_of_week = 0;
+
+	echo '<tr>';
+
+	// Empty cells before first day
+	for ($i = 0; $i < $first_day_of_week; $i++) {
+		echo '<td style="padding: 10px; border: 1px solid #ddd; background-color: #f5f5f5; height: 100px; vertical-align: top;"></td>';
+		$current_day_of_week++;
+	}
+
+	// Days of the month
+	while ($day_counter <= $days_in_month) {
+		$current_date = date('Y-m-d', mktime(0, 0, 0, $current_month, $day_counter, $current_year));
+		$is_today = ($current_date == date('Y-m-d'));
+		$entry_count = isset($entries_by_day[$current_date]) ? count($entries_by_day[$current_date]) : 0;
+
+		// Cell styling
+		$cell_style = 'padding: 10px; border: 1px solid #ddd; vertical-align: top; height: 100px; position: relative;';
+		if ($is_today) {
+			$cell_style .= ' background-color: #fff3cd; border-color: #ffc107;';
+		}
+
+		echo '<td style="' . esc_attr($cell_style) . '" class="wit-calendar-cell" data-date="' . esc_attr($current_date) . '">';
+		echo '<div style="font-weight: bold; margin-bottom: 5px;">' . esc_html($day_counter) . '</div>';
+
+		// Display bank holiday if exists
+		if (isset($bank_holidays_by_day[$current_date])) {
+			echo '<div style="background-color: #d63638; color: white; padding: 3px 6px; border-radius: 4px; font-size: 10px; margin-bottom: 5px; font-weight: bold;">' . esc_html($bank_holidays_by_day[$current_date]) . '</div>';
+		}
+
+		if ($entry_count > 0) {
+			echo '<div class="wit-entry-badge" style="background-color: #2271b1; color: white; padding: 3px 8px; border-radius: 10px; font-size: 11px; display: inline-block; cursor: pointer;" onclick="witToggleEntries(\'' . esc_js($current_date) . '\')">';
+			echo esc_html(sprintf(_n('%d entry', '%d entries', $entry_count, 'whos-in-today'), $entry_count));
+			echo '</div>';
+
+			// Hidden entries container
+			echo '<div id="wit-entries-' . esc_attr($current_date) . '" class="wit-entries-container" style="display: none; margin-top: 10px; padding: 10px; background: white; border: 1px solid #ccc; border-radius: 4px; position: absolute; z-index: 1000; left: 0; top: 100%; min-width: 300px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">';
+			echo '<div style="font-weight: bold; margin-bottom: 8px; border-bottom: 1px solid #ddd; padding-bottom: 5px;">' . esc_html(WITTidyDate($current_date)) . '</div>';
+
+			foreach ($entries_by_day[$current_date] as $entry) {
+				$user = isset($users_cache[$entry->userid]) ? $users_cache[$entry->userid] : false;
+				if ($user && (!$user->first_name OR !$user->last_name)) {
+					$username = $user->user_login;
+				} elseif ($user) {
+					$username = $user->first_name . " " . $user->last_name;
+				} else {
+					$username = 'Unknown User';
+				}
+
+				$delete_url = wp_nonce_url('?page=WhosInToday&wit_month=' . $current_month . '&wit_year=' . $current_year . '&delid=' . $entry->id, 'delete_wit_entry_' . $entry->id);
+
+				echo '<div style="padding: 5px 0; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center;">';
+				echo '<div><strong>' . esc_html($username) . '</strong><br><span style="color: #666; font-size: 12px;">' . esc_html($entry->location) . '</span></div>';
+				echo '<a href="' . esc_url($delete_url) . '" class="button button-small" style="margin-left: 10px;" onclick="return confirm(\'' . esc_js(__('Are you sure you want to delete this entry?', 'whos-in-today')) . '\');">' . esc_html__('Delete', 'whos-in-today') . '</a>';
+				echo '</div>';
+			}
+
+			echo '<div style="margin-top: 8px; text-align: right;"><a href="#" onclick="witToggleEntries(\'' . esc_js($current_date) . '\'); return false;" style="font-size: 12px;">' . esc_html__('Close', 'whos-in-today') . '</a></div>';
+			echo '</div>';
+		}
+
+		echo '</td>';
+
+		$day_counter++;
+		$current_day_of_week++;
+
+		// Start new row after Sunday
+		if ($current_day_of_week == 7 && $day_counter <= $days_in_month) {
+			echo '</tr><tr>';
+			$current_day_of_week = 0;
+		}
+	}
+
+	// Fill remaining cells
+	while ($current_day_of_week < 7 && $current_day_of_week > 0) {
+		echo '<td style="padding: 10px; border: 1px solid #ddd; background-color: #f5f5f5; height: 100px; vertical-align: top;"></td>';
+		$current_day_of_week++;
+	}
+
+	echo '</tr></tbody></table>';
+
+	// JavaScript for toggling entries
+	?>
+	<script type="text/javascript">
+	function witToggleEntries(date) {
+		var container = document.getElementById('wit-entries-' + date);
+		if (container.style.display === 'none') {
+			// Close all other open containers
+			var allContainers = document.querySelectorAll('.wit-entries-container');
+			allContainers.forEach(function(c) {
+				c.style.display = 'none';
+			});
+			// Open this one
+			container.style.display = 'block';
+		} else {
+			container.style.display = 'none';
+		}
+	}
+
+	// Close entries when clicking outside
+	document.addEventListener('click', function(event) {
+		var isCalendarCell = event.target.closest('.wit-calendar-cell');
+		var isEntriesContainer = event.target.closest('.wit-entries-container');
+		var isBadge = event.target.closest('.wit-entry-badge');
+
+		if (!isCalendarCell && !isEntriesContainer && !isBadge) {
+			var allContainers = document.querySelectorAll('.wit-entries-container');
+			allContainers.forEach(function(c) {
+				c.style.display = 'none';
+			});
+		}
+	});
+	</script>
+	<style>
+	.wit-calendar-cell:hover {
+		background-color: #f9f9f9;
+	}
+	.wit-entry-badge:hover {
+		background-color: #135e96;
+	}
+	</style>
+	<?php
+}
+
+function WITShowSettings() {
+
+	// Check user capabilities
+	if (!current_user_can('manage_options')) {
+		wp_die(__('You do not have sufficient permissions to access this page.'));
+	}
+
+	// Get current setting value (default to 2 weeks)
+	$weeks_ahead = get_option('wit_weeks_ahead', 2);
+
+	echo '<div class="wrap">';
+	echo '<h1>' . esc_html__('Who\'s In Today - Settings', 'whos-in-today') . '</h1>';
+
+	// Show success message if just saved
+	if (isset($_GET['settings-updated']) && $_GET['settings-updated'] == 'true') {
+		echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Settings saved successfully.', 'whos-in-today') . '</p></div>';
+	}
+
+	echo '<form method="post" action="">';
+	wp_nonce_field('wit_save_settings', 'wit_settings_nonce');
+
+	echo '<table class="form-table" role="presentation">';
+	echo '<tbody>';
+
+	// Weeks ahead setting
+	echo '<tr>';
+	echo '<th scope="row"><label for="wit_weeks_ahead">' . esc_html__('Weeks Ahead', 'whos-in-today') . '</label></th>';
+	echo '<td>';
+	echo '<input type="number" name="wit_weeks_ahead" id="wit_weeks_ahead" value="' . esc_attr($weeks_ahead) . '" min="1" max="52" class="small-text" />';
+	echo '<p class="description">' . esc_html__('Number of weeks ahead that users can add their location entries. Default is 2 weeks.', 'whos-in-today') . '</p>';
+	echo '</td>';
+	echo '</tr>';
+
+	echo '</tbody>';
+	echo '</table>';
+
+	echo '<p class="submit">';
+	echo '<input type="submit" name="wit_save_settings" id="submit" class="button button-primary" value="' . esc_attr__('Save Settings', 'whos-in-today') . '" />';
+	echo '</p>';
+
+	echo '</form>';
+	echo '</div>';
+
+}
+
+function WITSaveSettings() {
+
+	// Check user capabilities
+	if (!current_user_can('manage_options')) {
+		wp_die(__('You do not have sufficient permissions to access this page.'));
+	}
+
+	// Get and validate weeks ahead value
+	$weeks_ahead = isset($_POST['wit_weeks_ahead']) ? intval($_POST['wit_weeks_ahead']) : 2;
+
+	// Validate range (1-52 weeks)
+	if ($weeks_ahead < 1) {
+		$weeks_ahead = 1;
+	} elseif ($weeks_ahead > 52) {
+		$weeks_ahead = 52;
+	}
+
+	// Save setting
+	update_option('wit_weeks_ahead', $weeks_ahead);
+
+	// Redirect back to settings page with success message
+	wp_redirect(admin_url('admin.php?page=wit_settings&settings-updated=true'));
+	exit;
+
+}
+
+function WITGetWeeksAhead() {
+	// Helper function to get weeks ahead setting with default fallback
+	return get_option('wit_weeks_ahead', 2);
 }

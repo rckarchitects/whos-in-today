@@ -81,9 +81,39 @@ if (!function_exists('whosintoday_table')) {
         }
     }
 
+    // Setup cron job for email reminders
+    function whosintoday_schedule_reminder_cron() {
+        if (!wp_next_scheduled('whosintoday_send_reminders')) {
+            // Default: Schedule for every Monday at 9:00 AM
+            $day_of_week = get_option('wit_reminder_day', 1); // 1 = Monday
+            $hour = get_option('wit_reminder_hour', 9);
+            $minute = get_option('wit_reminder_minute', 0);
+
+            // Calculate next occurrence
+            $next_run = strtotime("next " . date('l', strtotime("Sunday +{$day_of_week} days")) . " {$hour}:{$minute}:00");
+            wp_schedule_event($next_run, 'weekly', 'whosintoday_send_reminders');
+        }
+    }
+
+    // Deactivate cron job on plugin deactivation
+    function whosintoday_deactivate_reminder_cron() {
+        $timestamp = wp_next_scheduled('whosintoday_send_reminders');
+        if ($timestamp) {
+            wp_unschedule_event($timestamp, 'whosintoday_send_reminders');
+        }
+    }
+
+    // Reschedule cron job when settings change
+    function whosintoday_reschedule_reminder_cron() {
+        whosintoday_deactivate_reminder_cron();
+        whosintoday_schedule_reminder_cron();
+    }
+
     register_activation_hook( __FILE__, 'whosintoday_table' );
     register_activation_hook( __FILE__, 'whosintoday_bankholidays_table' );
     register_activation_hook( __FILE__, 'whosintoday_locations_table' );
+    register_activation_hook( __FILE__, 'whosintoday_schedule_reminder_cron' );
+    register_deactivation_hook( __FILE__, 'whosintoday_deactivate_reminder_cron' );
 
     // Check and create locations table if it doesn't exist (for existing installations)
     function whosintoday_check_locations_table() {
@@ -297,7 +327,26 @@ if (!function_exists('whosintoday_table')) {
                 WITSaveSettings();
             }
         }
+
+        // Handle test email submission
+        if (isset($_POST['wit_send_test_email']) && !empty($_POST['wit_send_test_email'])) {
+            // Verify nonce for security
+            if (!isset($_POST['wit_test_email_nonce']) || !wp_verify_nonce($_POST['wit_test_email_nonce'], 'wit_test_email')) {
+                wp_die('Security check failed');
+            }
+            if (function_exists('WITSendTestEmail')) {
+                WITSendTestEmail();
+            }
+        }
     }
     add_action('admin_init', 'whosintoday_handle_settings_submission');
+
+    // Hook the email reminder function to the cron event
+    function whosintoday_execute_reminders() {
+        if (function_exists('WITSendReminderEmails')) {
+            WITSendReminderEmails();
+        }
+    }
+    add_action('whosintoday_send_reminders', 'whosintoday_execute_reminders');
 
 }

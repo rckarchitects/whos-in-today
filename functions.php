@@ -276,7 +276,9 @@ global $wpdb;
 
 	$tablename = $wpdb->prefix."whosintoday";
 	$start_date = date("Y-m-d",WITBeginWeek(time()));
-	$end_date = date("Y-m-d",WITBeginWeek(time() + 1209600));
+	$weeks_ahead = WITGetWeeksAhead();
+	$seconds_ahead = $weeks_ahead * 604800; // 604800 seconds per week
+	$end_date = date("Y-m-d",WITBeginWeek(time() + $seconds_ahead));
 	$entriesList = $wpdb->get_results($wpdb->prepare("SELECT * FROM ".$tablename." WHERE `day` >= %s AND `day` < %s AND `location` = 'Studio' order by day, location, userid", $start_date, $end_date));
 	
 	$array_location = array();
@@ -373,8 +375,12 @@ function whos_in_today_grid_shortcode() {
 	$count = 1;
 	
 	$daycount = WITBeginWeek(time());
-	
+
 	$array_of_bank_holidays = WITBankHolidayArray();
+
+	// Get weeks ahead setting and calculate total days (only weekdays)
+	$weeks_ahead = WITGetWeeksAhead();
+	$total_days = $weeks_ahead * 7; // Total days including weekends
 
 		$output = "<div>";
 
@@ -385,8 +391,8 @@ function whos_in_today_grid_shortcode() {
 		wp_nonce_field('wit_submit_table', 'wit_submit_nonce');
 		$output = $output . ob_get_clean();
 		$output = $output . "<table class=\"wp-list-table widefat fixed striped table-view-list\"><tr>";
-			
-		while ( $count <= 14) {
+
+		while ( $count <= $total_days) {
 
 			$current_date = date("Y-m-d",$daycount);
 			$array_count_locations = isset($array_count_locations) ? $array_count_locations : array();
@@ -403,16 +409,19 @@ function whos_in_today_grid_shortcode() {
 				foreach ($WITLocations AS $location) {
 					
 					$check_string = date("Y-m-d",$daycount) . "|" . $location . "|" . get_current_user_id();
-					
+
 					if (date("Y-m-d",$daycount) >=  date("Y-m-d",time())) {
-					
+
+						// Create unique ID for radio button
+						$radio_id = 'wit_' . esc_attr(date("Ymd",$daycount)) . '_' . esc_attr(sanitize_title($location));
+
 						$output = $output . "
-						<input type='radio' value='" . esc_attr($check_string) . "' name='" . esc_attr(date("Y-m-d",$daycount)) . "' ";
-												
+						<input type='radio' id='" . $radio_id . "' value='" . esc_attr($check_string) . "' name='" . esc_attr(date("Y-m-d",$daycount)) . "' ";
+
 						if ( in_array($check_string,$array_of_user_days)) { $output = $output . " checked=\"checked\" "; }
-						
+
 						$output = $output . " class=\"WITselect\" />
-						<label for='" . esc_attr($current_user) . "'>" . esc_html($location) . "</label><br />";
+						<label for='" . $radio_id . "'>" . esc_html($location) . "</label><br />";
 						
 					} elseif ( in_array($check_string,$array_of_user_days)) { $output = $output . "<span style='padding: 3px 12px 3px 12px; background: #136ebf; height: 20px; border-radius: 10px; font-size: 0.9em; line-height: 30px; color: white;'>" . esc_html($location) . "</span> ";; }
 					
@@ -421,9 +430,9 @@ function whos_in_today_grid_shortcode() {
 			} else { $output = $output . WITGetBankHoliday(date("Y-m-d",$daycount)); }
 			
 			$output = $output . "</td>"; }
-			
-			if ($count == 7) { $output = $output . "</tr><tr>"; }
-			
+
+			if ($count % 7 == 0 && $count < $total_days) { $output = $output . "</tr><tr>"; }
+
 			$count++;
 			$daycount = $daycount + 86400;
 			
@@ -445,7 +454,9 @@ function WITDaysArray($time) {
 	$tablename = $wpdb->prefix."whosintoday";
 
 	$start_date = date("Y-m-d",WITBeginWeek(time()));
-	$end_date = date("Y-m-d",WITBeginWeek(time() + 1209600));
+	$weeks_ahead = WITGetWeeksAhead();
+	$seconds_ahead = $weeks_ahead * 604800; // 604800 seconds per week
+	$end_date = date("Y-m-d",WITBeginWeek(time() + $seconds_ahead));
 	$sql = $wpdb->prepare("SELECT * FROM `".$tablename."` WHERE `day` >= %s AND `day` < %s", $start_date, $end_date);
 
 	$entriesList = $wpdb->get_results($sql);
@@ -1246,8 +1257,19 @@ function WITShowSettings() {
 		wp_die(__('You do not have sufficient permissions to access this page.'));
 	}
 
-	// Get current setting value (default to 2 weeks)
+	// Get current setting values
 	$weeks_ahead = get_option('wit_weeks_ahead', 2);
+	$reminder_enabled = get_option('wit_reminder_enabled', 0);
+	$reminder_day = get_option('wit_reminder_day', 1); // 1 = Monday
+	$reminder_hour = get_option('wit_reminder_hour', 9);
+	$reminder_minute = get_option('wit_reminder_minute', 0);
+	$reminder_subject = get_option('wit_reminder_subject', 'Reminder: Please update your location for the coming weeks');
+	$reminder_message = get_option('wit_reminder_message',
+		"Hi {name},\n\n" .
+		"This is a friendly reminder to update your location for the coming {weeks} weeks.\n\n" .
+		"Please visit: {url}\n\n" .
+		"Thank you!"
+	);
 
 	echo '<div class="wrap">';
 	echo '<h1>' . esc_html__('Who\'s In Today - Settings', 'whos-in-today') . '</h1>';
@@ -1260,6 +1282,7 @@ function WITShowSettings() {
 	echo '<form method="post" action="">';
 	wp_nonce_field('wit_save_settings', 'wit_settings_nonce');
 
+	echo '<h2>' . esc_html__('General Settings', 'whos-in-today') . '</h2>';
 	echo '<table class="form-table" role="presentation">';
 	echo '<tbody>';
 
@@ -1275,11 +1298,88 @@ function WITShowSettings() {
 	echo '</tbody>';
 	echo '</table>';
 
+	echo '<h2>' . esc_html__('Email Reminder Settings', 'whos-in-today') . '</h2>';
+	echo '<table class="form-table" role="presentation">';
+	echo '<tbody>';
+
+	// Enable reminders
+	echo '<tr>';
+	echo '<th scope="row"><label for="wit_reminder_enabled">' . esc_html__('Enable Email Reminders', 'whos-in-today') . '</label></th>';
+	echo '<td>';
+	echo '<input type="checkbox" name="wit_reminder_enabled" id="wit_reminder_enabled" value="1" ' . checked(1, $reminder_enabled, false) . ' />';
+	echo '<p class="description">' . esc_html__('Send automatic email reminders to users who haven\'t entered their location.', 'whos-in-today') . '</p>';
+	echo '</td>';
+	echo '</tr>';
+
+	// Day of week
+	echo '<tr>';
+	echo '<th scope="row"><label for="wit_reminder_day">' . esc_html__('Reminder Day', 'whos-in-today') . '</label></th>';
+	echo '<td>';
+	echo '<select name="wit_reminder_day" id="wit_reminder_day">';
+	$days = array(1 => 'Monday', 2 => 'Tuesday', 3 => 'Wednesday', 4 => 'Thursday', 5 => 'Friday', 6 => 'Saturday', 0 => 'Sunday');
+	foreach ($days as $value => $label) {
+		echo '<option value="' . esc_attr($value) . '" ' . selected($value, $reminder_day, false) . '>' . esc_html__($label, 'whos-in-today') . '</option>';
+	}
+	echo '</select>';
+	echo '<p class="description">' . esc_html__('Which day of the week to send reminders.', 'whos-in-today') . '</p>';
+	echo '</td>';
+	echo '</tr>';
+
+	// Time
+	echo '<tr>';
+	echo '<th scope="row"><label for="wit_reminder_hour">' . esc_html__('Reminder Time', 'whos-in-today') . '</label></th>';
+	echo '<td>';
+	echo '<input type="number" name="wit_reminder_hour" id="wit_reminder_hour" value="' . esc_attr($reminder_hour) . '" min="0" max="23" class="small-text" /> : ';
+	echo '<input type="number" name="wit_reminder_minute" id="wit_reminder_minute" value="' . esc_attr(str_pad($reminder_minute, 2, '0', STR_PAD_LEFT)) . '" min="0" max="59" class="small-text" />';
+	echo '<p class="description">' . esc_html__('Time to send reminders (24-hour format, e.g., 09:00 for 9 AM).', 'whos-in-today') . '</p>';
+	echo '</td>';
+	echo '</tr>';
+
+	// Email subject
+	echo '<tr>';
+	echo '<th scope="row"><label for="wit_reminder_subject">' . esc_html__('Email Subject', 'whos-in-today') . '</label></th>';
+	echo '<td>';
+	echo '<input type="text" name="wit_reminder_subject" id="wit_reminder_subject" value="' . esc_attr($reminder_subject) . '" class="regular-text" />';
+	echo '</td>';
+	echo '</tr>';
+
+	// Email message
+	echo '<tr>';
+	echo '<th scope="row"><label for="wit_reminder_message">' . esc_html__('Email Message', 'whos-in-today') . '</label></th>';
+	echo '<td>';
+	echo '<textarea name="wit_reminder_message" id="wit_reminder_message" rows="8" cols="50" class="large-text">' . esc_textarea($reminder_message) . '</textarea>';
+	echo '<p class="description">' . esc_html__('Available placeholders: {name}, {weeks}, {url}', 'whos-in-today') . '</p>';
+	echo '</td>';
+	echo '</tr>';
+
+	echo '</tbody>';
+	echo '</table>';
+
 	echo '<p class="submit">';
 	echo '<input type="submit" name="wit_save_settings" id="submit" class="button button-primary" value="' . esc_attr__('Save Settings', 'whos-in-today') . '" />';
 	echo '</p>';
 
 	echo '</form>';
+
+	// Test email section
+	echo '<hr style="margin: 30px 0;" />';
+	echo '<h2>' . esc_html__('Test Email Reminder', 'whos-in-today') . '</h2>';
+	echo '<p>' . esc_html__('Send a test reminder email to check your settings.', 'whos-in-today') . '</p>';
+	echo '<form method="post" action="">';
+	wp_nonce_field('wit_test_email', 'wit_test_email_nonce');
+	echo '<p>';
+	echo '<input type="email" name="wit_test_email_address" placeholder="' . esc_attr__('Enter email address', 'whos-in-today') . '" value="' . esc_attr(wp_get_current_user()->user_email) . '" class="regular-text" /> ';
+	echo '<input type="submit" name="wit_send_test_email" class="button" value="' . esc_attr__('Send Test Email', 'whos-in-today') . '" />';
+	echo '</p>';
+	echo '</form>';
+
+	// Show test email result
+	if (isset($_GET['test-email']) && $_GET['test-email'] == 'sent') {
+		echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Test email sent successfully!', 'whos-in-today') . '</p></div>';
+	} elseif (isset($_GET['test-email']) && $_GET['test-email'] == 'failed') {
+		echo '<div class="notice notice-error is-dismissible"><p>' . esc_html__('Test email failed to send. Please check your WordPress email settings.', 'whos-in-today') . '</p></div>';
+	}
+
 	echo '</div>';
 
 }
@@ -1301,8 +1401,40 @@ function WITSaveSettings() {
 		$weeks_ahead = 52;
 	}
 
-	// Save setting
+	// Save general settings
 	update_option('wit_weeks_ahead', $weeks_ahead);
+
+	// Get and save reminder settings
+	$reminder_enabled = isset($_POST['wit_reminder_enabled']) ? 1 : 0;
+	$reminder_day = isset($_POST['wit_reminder_day']) ? intval($_POST['wit_reminder_day']) : 1;
+	$reminder_hour = isset($_POST['wit_reminder_hour']) ? intval($_POST['wit_reminder_hour']) : 9;
+	$reminder_minute = isset($_POST['wit_reminder_minute']) ? intval($_POST['wit_reminder_minute']) : 0;
+	$reminder_subject = isset($_POST['wit_reminder_subject']) ? sanitize_text_field($_POST['wit_reminder_subject']) : 'Reminder: Please update your location for the coming weeks';
+	$reminder_message = isset($_POST['wit_reminder_message']) ? wp_kses_post($_POST['wit_reminder_message']) : '';
+
+	// Validate time values
+	if ($reminder_hour < 0 || $reminder_hour > 23) {
+		$reminder_hour = 9;
+	}
+	if ($reminder_minute < 0 || $reminder_minute > 59) {
+		$reminder_minute = 0;
+	}
+	if ($reminder_day < 0 || $reminder_day > 6) {
+		$reminder_day = 1;
+	}
+
+	// Save reminder settings
+	update_option('wit_reminder_enabled', $reminder_enabled);
+	update_option('wit_reminder_day', $reminder_day);
+	update_option('wit_reminder_hour', $reminder_hour);
+	update_option('wit_reminder_minute', $reminder_minute);
+	update_option('wit_reminder_subject', $reminder_subject);
+	update_option('wit_reminder_message', $reminder_message);
+
+	// Reschedule cron if settings changed
+	if (function_exists('whosintoday_reschedule_reminder_cron')) {
+		whosintoday_reschedule_reminder_cron();
+	}
 
 	// Redirect back to settings page with success message
 	wp_redirect(admin_url('admin.php?page=wit_settings&settings-updated=true'));
@@ -1313,4 +1445,118 @@ function WITSaveSettings() {
 function WITGetWeeksAhead() {
 	// Helper function to get weeks ahead setting with default fallback
 	return get_option('wit_weeks_ahead', 2);
+}
+
+function WITSendTestEmail() {
+	// Check user capabilities
+	if (!current_user_can('manage_options')) {
+		wp_die(__('You do not have sufficient permissions to access this page.'));
+	}
+
+	$test_email = isset($_POST['wit_test_email_address']) ? sanitize_email($_POST['wit_test_email_address']) : '';
+
+	if (empty($test_email) || !is_email($test_email)) {
+		wp_redirect(admin_url('admin.php?page=wit_settings&test-email=failed'));
+		exit;
+	}
+
+	// Get email settings
+	$subject = get_option('wit_reminder_subject', 'Reminder: Please update your location for the coming weeks');
+	$message = get_option('wit_reminder_message',
+		"Hi {name},\n\n" .
+		"This is a friendly reminder to update your location for the coming {weeks} weeks.\n\n" .
+		"Please visit: {url}\n\n" .
+		"Thank you!"
+	);
+
+	// Replace placeholders with test data
+	$current_user = wp_get_current_user();
+	$user_name = $current_user->first_name ? $current_user->first_name : $current_user->user_login;
+	$weeks_ahead = WITGetWeeksAhead();
+
+	$message = str_replace('{name}', $user_name, $message);
+	$message = str_replace('{weeks}', $weeks_ahead, $message);
+	$message = str_replace('{url}', home_url(), $message);
+
+	// Add test notice to subject
+	$subject = '[TEST] ' . $subject;
+
+	// Send test email
+	$headers = array('Content-Type: text/plain; charset=UTF-8');
+	$result = wp_mail($test_email, $subject, $message, $headers);
+
+	if ($result) {
+		wp_redirect(admin_url('admin.php?page=wit_settings&test-email=sent'));
+	} else {
+		wp_redirect(admin_url('admin.php?page=wit_settings&test-email=failed'));
+	}
+	exit;
+}
+
+function WITSendReminderEmails() {
+	// Check if reminders are enabled
+	if (!get_option('wit_reminder_enabled', 0)) {
+		error_log("Who's In Today: Email reminders are disabled.");
+		return 0;
+	}
+
+	// Get all users
+	$users = get_users(array('role__not_in' => array('administrator'))); // Optionally exclude admins
+
+	global $wpdb;
+	$tablename = $wpdb->prefix."whosintoday";
+
+	// Get date range for checking entries
+	$start_date = date("Y-m-d", WITBeginWeek(time()));
+	$weeks_ahead = WITGetWeeksAhead();
+	$seconds_ahead = $weeks_ahead * 604800;
+	$end_date = date("Y-m-d", WITBeginWeek(time() + $seconds_ahead));
+
+	$users_to_remind = array();
+
+	foreach ($users as $user) {
+		// Check if user has any entries in the date range
+		$entries = $wpdb->get_var($wpdb->prepare(
+			"SELECT COUNT(*) FROM " . $tablename . " WHERE userid = %d AND day >= %s AND day < %s",
+			$user->ID,
+			$start_date,
+			$end_date
+		));
+
+		// If no entries found, add to reminder list
+		if ($entries == 0) {
+			$users_to_remind[] = $user;
+		}
+	}
+
+	// Send reminder emails
+	$sent_count = 0;
+	foreach ($users_to_remind as $user) {
+		$to = $user->user_email;
+		$subject = get_option('wit_reminder_subject', 'Reminder: Please update your location for the coming weeks');
+
+		$message = get_option('wit_reminder_message',
+			"Hi {name},\n\n" .
+			"This is a friendly reminder to update your location for the coming {weeks} weeks.\n\n" .
+			"Please visit: {url}\n\n" .
+			"Thank you!"
+		);
+
+		// Replace placeholders
+		$user_name = $user->first_name ? $user->first_name : $user->user_login;
+		$message = str_replace('{name}', $user_name, $message);
+		$message = str_replace('{weeks}', $weeks_ahead, $message);
+		$message = str_replace('{url}', home_url(), $message);
+
+		// Send email
+		$headers = array('Content-Type: text/plain; charset=UTF-8');
+		if (wp_mail($to, $subject, $message, $headers)) {
+			$sent_count++;
+		}
+	}
+
+	// Log the result
+	error_log("Who's In Today: Sent {$sent_count} reminder emails to users without entries.");
+
+	return $sent_count;
 }

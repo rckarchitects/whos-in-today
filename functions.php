@@ -1377,7 +1377,36 @@ function WITShowSettings() {
 	if (isset($_GET['test-email']) && $_GET['test-email'] == 'sent') {
 		echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__('Test email sent successfully!', 'whos-in-today') . '</p></div>';
 	} elseif (isset($_GET['test-email']) && $_GET['test-email'] == 'failed') {
-		echo '<div class="notice notice-error is-dismissible"><p>' . esc_html__('Test email failed to send. Please check your WordPress email settings.', 'whos-in-today') . '</p></div>';
+		$error = isset($_GET['error']) ? sanitize_text_field($_GET['error']) : 'Unknown error';
+		echo '<div class="notice notice-error is-dismissible"><p>' . esc_html__('Test email failed to send.', 'whos-in-today');
+		if ($error && $error != 'invalid-email') {
+			echo '<br><strong>' . esc_html__('Error:', 'whos-in-today') . '</strong> ' . esc_html($error);
+		}
+		echo '</p></div>';
+	}
+
+	// Show diagnostic information
+	$diagnostic = get_option('wit_last_test_email_diagnostic');
+	if ($diagnostic && is_array($diagnostic)) {
+		echo '<div style="background: #f0f0f1; padding: 15px; border-radius: 4px; margin-top: 20px;">';
+		echo '<h3 style="margin-top: 0;">' . esc_html__('Last Test Email Diagnostic', 'whos-in-today') . '</h3>';
+		echo '<table class="widefat" style="background: white;">';
+		echo '<tbody>';
+		echo '<tr><td style="width: 200px;"><strong>' . esc_html__('Timestamp:', 'whos-in-today') . '</strong></td><td>' . esc_html($diagnostic['timestamp']) . '</td></tr>';
+		echo '<tr><td><strong>' . esc_html__('To:', 'whos-in-today') . '</strong></td><td>' . esc_html($diagnostic['to']) . '</td></tr>';
+		echo '<tr><td><strong>' . esc_html__('Subject:', 'whos-in-today') . '</strong></td><td>' . esc_html($diagnostic['subject']) . '</td></tr>';
+		echo '<tr><td><strong>' . esc_html__('User Name:', 'whos-in-today') . '</strong></td><td>' . esc_html($diagnostic['user_name']) . '</td></tr>';
+		echo '<tr><td><strong>' . esc_html__('Weeks:', 'whos-in-today') . '</strong></td><td>' . esc_html($diagnostic['weeks']) . '</td></tr>';
+		echo '<tr><td><strong>' . esc_html__('URL:', 'whos-in-today') . '</strong></td><td>' . esc_html($diagnostic['url']) . '</td></tr>';
+		echo '<tr><td><strong>' . esc_html__('Result:', 'whos-in-today') . '</strong></td><td>' . ($diagnostic['result'] ? '<span style="color: green;">✓ Success</span>' : '<span style="color: red;">✗ Failed</span>') . '</td></tr>';
+		if (!empty($diagnostic['error'])) {
+			echo '<tr><td><strong>' . esc_html__('Error:', 'whos-in-today') . '</strong></td><td style="color: red;">' . esc_html($diagnostic['error']) . '</td></tr>';
+		}
+		echo '<tr><td><strong>' . esc_html__('Message Preview:', 'whos-in-today') . '</strong></td><td><pre style="background: #f9f9f9; padding: 10px; white-space: pre-wrap; word-wrap: break-word;">' . esc_html($diagnostic['message']) . '</pre></td></tr>';
+		echo '</tbody>';
+		echo '</table>';
+		echo '<p style="margin-top: 10px; font-size: 12px; color: #666;">' . esc_html__('Note: Check your server error logs for more detailed information.', 'whos-in-today') . '</p>';
+		echo '</div>';
 	}
 
 	echo '</div>';
@@ -1410,7 +1439,7 @@ function WITSaveSettings() {
 	$reminder_hour = isset($_POST['wit_reminder_hour']) ? intval($_POST['wit_reminder_hour']) : 9;
 	$reminder_minute = isset($_POST['wit_reminder_minute']) ? intval($_POST['wit_reminder_minute']) : 0;
 	$reminder_subject = isset($_POST['wit_reminder_subject']) ? sanitize_text_field($_POST['wit_reminder_subject']) : 'Reminder: Please update your location for the coming weeks';
-	$reminder_message = isset($_POST['wit_reminder_message']) ? wp_kses_post($_POST['wit_reminder_message']) : '';
+	$reminder_message = isset($_POST['wit_reminder_message']) ? sanitize_textarea_field($_POST['wit_reminder_message']) : '';
 
 	// Validate time values
 	if ($reminder_hour < 0 || $reminder_hour > 23) {
@@ -1456,7 +1485,7 @@ function WITSendTestEmail() {
 	$test_email = isset($_POST['wit_test_email_address']) ? sanitize_email($_POST['wit_test_email_address']) : '';
 
 	if (empty($test_email) || !is_email($test_email)) {
-		wp_redirect(admin_url('admin.php?page=wit_settings&test-email=failed'));
+		wp_redirect(admin_url('admin.php?page=wit_settings&test-email=failed&error=invalid-email'));
 		exit;
 	}
 
@@ -1471,7 +1500,17 @@ function WITSendTestEmail() {
 
 	// Replace placeholders with test data
 	$current_user = wp_get_current_user();
-	$user_name = $current_user->first_name ? $current_user->first_name : $current_user->user_login;
+	$first_name = get_user_meta($current_user->ID, 'first_name', true);
+	$last_name = get_user_meta($current_user->ID, 'last_name', true);
+
+	if ($first_name && $last_name) {
+		$user_name = $first_name . ' ' . $last_name;
+	} elseif ($first_name) {
+		$user_name = $first_name;
+	} else {
+		$user_name = $current_user->user_login;
+	}
+
 	$weeks_ahead = WITGetWeeksAhead();
 
 	$message = str_replace('{name}', $user_name, $message);
@@ -1481,14 +1520,43 @@ function WITSendTestEmail() {
 	// Add test notice to subject
 	$subject = '[TEST] ' . $subject;
 
+	// Store diagnostic info
+	$diagnostic = array(
+		'to' => $test_email,
+		'subject' => $subject,
+		'message' => $message,
+		'user_name' => $user_name,
+		'weeks' => $weeks_ahead,
+		'url' => home_url(),
+		'timestamp' => current_time('mysql')
+	);
+
+	// Log diagnostic info
+	error_log("WIT Test Email Attempt - To: {$test_email}, Subject: {$subject}");
+
 	// Send test email
 	$headers = array('Content-Type: text/plain; charset=UTF-8');
+
+	// Capture any PHP mail errors
+	$mail_error = '';
+	add_action('wp_mail_failed', function($error) use (&$mail_error) {
+		$mail_error = $error->get_error_message();
+		error_log("WIT Test Email Failed: " . $mail_error);
+	});
+
 	$result = wp_mail($test_email, $subject, $message, $headers);
 
+	// Store diagnostic result
+	$diagnostic['result'] = $result;
+	$diagnostic['error'] = $mail_error;
+	update_option('wit_last_test_email_diagnostic', $diagnostic);
+
 	if ($result) {
+		error_log("WIT Test Email: Successfully sent to {$test_email}");
 		wp_redirect(admin_url('admin.php?page=wit_settings&test-email=sent'));
 	} else {
-		wp_redirect(admin_url('admin.php?page=wit_settings&test-email=failed'));
+		error_log("WIT Test Email: Failed to send to {$test_email}. Error: {$mail_error}");
+		wp_redirect(admin_url('admin.php?page=wit_settings&test-email=failed&error=' . urlencode($mail_error)));
 	}
 	exit;
 }
@@ -1543,7 +1611,17 @@ function WITSendReminderEmails() {
 		);
 
 		// Replace placeholders
-		$user_name = $user->first_name ? $user->first_name : $user->user_login;
+		$first_name = get_user_meta($user->ID, 'first_name', true);
+		$last_name = get_user_meta($user->ID, 'last_name', true);
+
+		if ($first_name && $last_name) {
+			$user_name = $first_name . ' ' . $last_name;
+		} elseif ($first_name) {
+			$user_name = $first_name;
+		} else {
+			$user_name = $user->user_login;
+		}
+
 		$message = str_replace('{name}', $user_name, $message);
 		$message = str_replace('{weeks}', $weeks_ahead, $message);
 		$message = str_replace('{url}', home_url(), $message);

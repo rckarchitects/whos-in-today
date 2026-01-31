@@ -1,0 +1,20 @@
+Instructions to test the calendar feed:
+
+1. IMPORTANT: Deactivate and Reactivate the plugin
+   - Go to WordPress Admin → Plugins
+   - Deactivate "Who's In Today?"
+   - Activate it again
+   - This flushes rewrite rules
+
+2. Get the feed URL from Settings → Calendar Feed
+
+3. Test with curl or browser:
+   curl -i "YOUR_FEED_URL_HERE"
+
+4. Look for the headers - should show:
+   Content-Type: text/calendar
+   
+5. First line of body should be:
+   BEGIN:VCALENDAR
+
+If you see HTML instead, the issue is that template_redirect is not early enough.

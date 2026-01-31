@@ -102,8 +102,16 @@ function WITCheckBankHoliday($time) {
 }
 
 function WITCheckAllUsers() {
-	
-	$all_users = get_users(array( 'role__in' => array( 'author','editor','administrator' ) ));
+
+	// Get included roles from settings
+	$included_roles = get_option('wit_included_roles', array('contributor', 'author', 'editor', 'administrator'));
+
+	// Ensure we have at least one role to avoid returning all users
+	if (empty($included_roles)) {
+		$included_roles = array('administrator');
+	}
+
+	$all_users = get_users(array( 'role__in' => $included_roles ));
 	
 	$output_id = array();
 	$output_name = array();
@@ -1259,6 +1267,7 @@ function WITShowSettings() {
 
 	// Get current setting values
 	$weeks_ahead = get_option('wit_weeks_ahead', 2);
+	$included_roles = get_option('wit_included_roles', array('contributor', 'author', 'editor', 'administrator'));
 	$reminder_enabled = get_option('wit_reminder_enabled', 0);
 	$reminder_day = get_option('wit_reminder_day', 1); // 1 = Monday
 	$reminder_hour = get_option('wit_reminder_hour', 9);
@@ -1273,6 +1282,9 @@ function WITShowSettings() {
 
 	echo '<div class="wrap">';
 	echo '<h1>' . esc_html__('Who\'s In Today - Settings', 'whos-in-today') . '</h1>';
+
+	// Show any admin notices (including MU-plugin installation messages)
+	settings_errors('wit_messages');
 
 	// Show success message if just saved
 	if (isset($_GET['settings-updated']) && $_GET['settings-updated'] == 'true') {
@@ -1292,6 +1304,117 @@ function WITShowSettings() {
 	echo '<td>';
 	echo '<input type="number" name="wit_weeks_ahead" id="wit_weeks_ahead" value="' . esc_attr($weeks_ahead) . '" min="1" max="52" class="small-text" />';
 	echo '<p class="description">' . esc_html__('Number of weeks ahead that users can add their location entries. Default is 2 weeks.', 'whos-in-today') . '</p>';
+	echo '</td>';
+	echo '</tr>';
+
+	// User roles setting
+	echo '<tr>';
+	echo '<th scope="row"><label>' . esc_html__('Included User Roles', 'whos-in-today') . '</label></th>';
+	echo '<td>';
+	echo '<fieldset>';
+
+	// Get all available WordPress roles
+	global $wp_roles;
+	$all_roles = $wp_roles->roles;
+
+	foreach ($all_roles as $role_slug => $role_info) {
+		$checked = in_array($role_slug, $included_roles) ? 'checked' : '';
+		echo '<label style="display: block; margin-bottom: 8px;">';
+		echo '<input type="checkbox" name="wit_included_roles[]" value="' . esc_attr($role_slug) . '" ' . $checked . ' /> ';
+		echo esc_html($role_info['name']);
+		echo '</label>';
+	}
+
+	echo '</fieldset>';
+	echo '<p class="description">' . esc_html__('Select which user roles should appear in the location tracking system and receive reminder emails.', 'whos-in-today') . '</p>';
+	echo '</td>';
+	echo '</tr>';
+
+	echo '</tbody>';
+	echo '</table>';
+
+	echo '<h2>' . esc_html__('Calendar Feed', 'whos-in-today') . '</h2>';
+	echo '<table class="form-table" role="presentation">';
+	echo '<tbody>';
+
+	// Get or generate calendar feed token
+	$feed_token = get_option('wit_calendar_feed_token');
+	if (empty($feed_token)) {
+		$feed_token = wp_generate_password(32, false);
+		update_option('wit_calendar_feed_token', $feed_token);
+	}
+
+	// Build feed URL - use custom rewrite that bypasses WPO365
+	$feed_url = home_url('/calendar-feed/?token=' . $feed_token);
+
+	echo '<tr>';
+	echo '<th scope="row">' . esc_html__('Organization Feed URL', 'whos-in-today') . '</th>';
+	echo '<td>';
+	echo '<input type="text" value="' . esc_attr($feed_url) . '" readonly class="large-text code" onclick="this.select()" />';
+	echo '<p class="description">' . esc_html__('Subscribe to this URL in Outlook, iOS Calendar, Google Calendar, or any calendar app that supports iCal feeds. Updates automatically when locations change.', 'whos-in-today') . '</p>';
+	echo '<p><a href="' . esc_url($feed_url) . '" class="button" target="_blank">' . esc_html__('Test Feed', 'whos-in-today') . '</a> ';
+	echo '<button type="button" class="button" onclick="navigator.clipboard.writeText(\'' . esc_js($feed_url) . '\'); alert(\'Feed URL copied to clipboard!\');">' . esc_html__('Copy URL', 'whos-in-today') . '</button></p>';
+	echo '</td>';
+	echo '</tr>';
+
+	echo '<tr>';
+	echo '<th scope="row">' . esc_html__('WPO365 Bypass Setup', 'whos-in-today') . '</th>';
+	echo '<td>';
+
+	// Check if mu-plugins loader exists
+	$mu_plugins_dir = WPMU_PLUGIN_DIR;
+	$mu_plugin_file = $mu_plugins_dir . '/calendar-feed-loader.php';
+	$source_file = plugin_dir_path(__FILE__) . 'calendar-feed-loader.php';
+
+	if (file_exists($mu_plugin_file)) {
+		echo '<p style="color: green; font-weight: bold;">✓ ' . esc_html__('MU-Plugin installed - WPO365 bypass is active', 'whos-in-today') . '</p>';
+		echo '<p class="description">' . sprintf(esc_html__('Location: %s', 'whos-in-today'), '<code>' . esc_html($mu_plugin_file) . '</code>') . '</p>';
+	} else {
+		echo '<div class="notice notice-warning inline">';
+		echo '<p><strong>' . esc_html__('Required Setup for WPO365 Sites', 'whos-in-today') . '</strong></p>';
+		echo '<p>' . esc_html__('Your site uses WPO365 authentication. To allow unauthenticated calendar feed access, you need to install a must-use plugin.', 'whos-in-today') . '</p>';
+
+		// Check if parent wp-content is writable (not just mu-plugins)
+		$wp_content_dir = dirname($mu_plugins_dir);
+		$can_auto_install = is_writable($wp_content_dir) || (file_exists($mu_plugins_dir) && is_writable($mu_plugins_dir));
+
+		if ($can_auto_install) {
+			echo '<p><button type="submit" name="wit_install_mu_plugin" class="button button-primary">' . esc_html__('Install WPO365 Bypass Now', 'whos-in-today') . '</button></p>';
+
+			// Show diagnostic info
+			echo '<details style="margin-top: 10px;">';
+			echo '<summary style="cursor: pointer; color: #666;">' . esc_html__('Show diagnostic info', 'whos-in-today') . '</summary>';
+			echo '<ul style="margin-top: 5px; font-family: monospace; font-size: 12px;">';
+			echo '<li>Source file: <code>' . esc_html($source_file) . '</code> - ' . (file_exists($source_file) ? '<span style="color: green;">exists</span>' : '<span style="color: red;">missing!</span>') . '</li>';
+			echo '<li>MU-plugins dir: <code>' . esc_html($mu_plugins_dir) . '</code> - ' . (file_exists($mu_plugins_dir) ? '<span style="color: green;">exists</span>' : '<span style="color: orange;">will be created</span>') . '</li>';
+			echo '<li>wp-content writable: ' . (is_writable($wp_content_dir) ? '<span style="color: green;">yes</span>' : '<span style="color: red;">no</span>') . '</li>';
+			echo '</ul>';
+			echo '</details>';
+		} else {
+			echo '<div class="notice notice-error inline" style="margin: 10px 0; padding: 10px;">';
+			echo '<p><strong>' . esc_html__('Automatic Installation Not Possible', 'whos-in-today') . '</strong></p>';
+			echo '<p>' . sprintf(esc_html__('WordPress cannot write to %s. Please install manually:', 'whos-in-today'), '<code>' . esc_html($wp_content_dir) . '</code>') . '</p>';
+			echo '</div>';
+
+			echo '<p><strong>' . esc_html__('Manual Installation Steps:', 'whos-in-today') . '</strong></p>';
+			echo '<ol>';
+			echo '<li>' . sprintf(esc_html__('Using FTP or file manager, create directory: %s', 'whos-in-today'), '<br><code>' . esc_html($mu_plugins_dir) . '</code>') . '</li>';
+			echo '<li>' . sprintf(esc_html__('Copy this file: %s', 'whos-in-today'), '<br><code>' . esc_html($source_file) . '</code>') . '</li>';
+			echo '<li>' . sprintf(esc_html__('To this location: %s', 'whos-in-today'), '<br><code>' . esc_html($mu_plugin_file) . '</code>') . '</li>';
+			echo '<li>' . esc_html__('Refresh this page to verify installation', 'whos-in-today') . '</li>';
+			echo '</ol>';
+		}
+		echo '</div>';
+	}
+	echo '</td>';
+	echo '</tr>';
+
+	echo '<tr>';
+	echo '<th scope="row">' . esc_html__('Feed Security', 'whos-in-today') . '</th>';
+	echo '<td>';
+	echo '<p>' . esc_html__('The feed URL contains a secret token. Anyone with this URL can view team locations. Keep it secure.', 'whos-in-today') . '</p>';
+	echo '<p><button type="submit" name="wit_regenerate_feed_token" class="button button-secondary" onclick="return confirm(\'' . esc_js(__('Regenerating the token will break any existing calendar subscriptions. Are you sure?', 'whos-in-today')) . '\');">' . esc_html__('Regenerate Feed URL', 'whos-in-today') . '</button></p>';
+	echo '<p class="description">' . esc_html__('Use this if you believe the feed URL has been compromised. You will need to re-subscribe in all calendar apps.', 'whos-in-today') . '</p>';
 	echo '</td>';
 	echo '</tr>';
 
@@ -1433,6 +1556,12 @@ function WITSaveSettings() {
 	// Save general settings
 	update_option('wit_weeks_ahead', $weeks_ahead);
 
+	// Get and save included roles
+	$included_roles = isset($_POST['wit_included_roles']) && is_array($_POST['wit_included_roles'])
+		? array_map('sanitize_text_field', $_POST['wit_included_roles'])
+		: array('contributor', 'author', 'editor', 'administrator');
+	update_option('wit_included_roles', $included_roles);
+
 	// Get and save reminder settings
 	$reminder_enabled = isset($_POST['wit_reminder_enabled']) ? 1 : 0;
 	$reminder_day = isset($_POST['wit_reminder_day']) ? intval($_POST['wit_reminder_day']) : 1;
@@ -1459,6 +1588,12 @@ function WITSaveSettings() {
 	update_option('wit_reminder_minute', $reminder_minute);
 	update_option('wit_reminder_subject', $reminder_subject);
 	update_option('wit_reminder_message', $reminder_message);
+
+	// Handle feed token regeneration
+	if (isset($_POST['wit_regenerate_feed_token'])) {
+		$new_token = wp_generate_password(32, false);
+		update_option('wit_calendar_feed_token', $new_token);
+	}
 
 	// Reschedule cron if settings changed
 	if (function_exists('whosintoday_reschedule_reminder_cron')) {
@@ -1568,8 +1703,17 @@ function WITSendReminderEmails() {
 		return 0;
 	}
 
-	// Get all users
-	$users = get_users(array('role__not_in' => array('administrator'))); // Optionally exclude admins
+	// Get included roles from settings
+	$included_roles = get_option('wit_included_roles', array('contributor', 'author', 'editor', 'administrator'));
+
+	// Ensure we have at least one role
+	if (empty($included_roles)) {
+		error_log("Who's In Today: No user roles selected for reminders.");
+		return 0;
+	}
+
+	// Get all users with included roles
+	$users = get_users(array('role__in' => $included_roles));
 
 	global $wpdb;
 	$tablename = $wpdb->prefix."whosintoday";
@@ -1637,4 +1781,146 @@ function WITSendReminderEmails() {
 	error_log("Who's In Today: Sent {$sent_count} reminder emails to users without entries.");
 
 	return $sent_count;
+}
+
+function WITGenerateCalendarFeed() {
+	// IMMEDIATELY kill all output buffers before doing ANYTHING
+	while (@ob_end_clean());
+
+	// Verify feed token
+	$saved_token = get_option('wit_calendar_feed_token');
+	$provided_token = isset($_GET['token']) ? sanitize_text_field($_GET['token']) : '';
+
+	if (empty($saved_token) || $provided_token !== $saved_token) {
+		status_header(401);
+		nocache_headers();
+		header('Content-Type: text/plain; charset=utf-8');
+		echo 'Unauthorized: Invalid calendar feed token';
+		exit;
+	}
+
+	// Prevent WordPress/theme/plugins from adding any extra output
+	remove_all_actions('wp_head');
+	remove_all_actions('wp_footer');
+	remove_all_actions('shutdown');
+	remove_all_actions('wp_print_styles');
+	remove_all_actions('wp_print_scripts');
+
+	// Clear ALL output buffers immediately
+	while (ob_get_level()) {
+		ob_end_clean();
+	}
+
+	// Start fresh output buffer
+	ob_start();
+
+	global $wpdb;
+	$tablename = $wpdb->prefix."whosintoday";
+
+	// Get date range - from 2 weeks ago to configured weeks ahead
+	$start_date = date("Y-m-d", strtotime('-2 weeks'));
+	$weeks_ahead = WITGetWeeksAhead();
+	$seconds_ahead = $weeks_ahead * 604800;
+	$end_date = date("Y-m-d", WITBeginWeek(time() + $seconds_ahead));
+
+	// Fetch all entries in range
+	$entries = $wpdb->get_results($wpdb->prepare(
+		"SELECT * FROM " . $tablename . " WHERE `day` >= %s AND `day` <= %s ORDER BY day ASC, userid ASC",
+		$start_date,
+		$end_date
+	));
+
+	// Pre-load users for efficiency
+	$user_ids = array_unique(array_column($entries, 'userid'));
+	$users_cache = array();
+	if (!empty($user_ids)) {
+		$users = get_users(array('include' => $user_ids));
+		foreach ($users as $user) {
+			$first_name = get_user_meta($user->ID, 'first_name', true);
+			$last_name = get_user_meta($user->ID, 'last_name', true);
+
+			if ($first_name && $last_name) {
+				$users_cache[$user->ID] = $first_name . ' ' . $last_name;
+			} elseif ($first_name) {
+				$users_cache[$user->ID] = $first_name;
+			} else {
+				$users_cache[$user->ID] = $user->user_login;
+			}
+		}
+	}
+
+	// Start building iCal format
+	$ical = "BEGIN:VCALENDAR\r\n";
+	$ical .= "VERSION:2.0\r\n";
+	$ical .= "PRODID:-//Who's In Today//Location Calendar//EN\r\n";
+	$ical .= "X-WR-CALNAME:Team Locations\r\n";
+	$ical .= "X-WR-TIMEZONE:" . wp_timezone_string() . "\r\n";
+	$ical .= "CALSCALE:GREGORIAN\r\n";
+	$ical .= "METHOD:PUBLISH\r\n";
+
+	// Helper function to escape iCal text
+	$escape_ical = function($text) {
+		$text = str_replace('\\', '\\\\', $text);
+		$text = str_replace(',', '\\,', $text);
+		$text = str_replace(';', '\\;', $text);
+		$text = str_replace("\n", '\\n', $text);
+		return $text;
+	};
+
+	// Add each entry as an event
+	foreach ($entries as $entry) {
+		$user_name = isset($users_cache[$entry->userid]) ? $users_cache[$entry->userid] : 'Unknown User';
+		$location = $entry->location;
+		$date = $entry->day;
+
+		// Escape special characters for iCal format
+		$user_name_escaped = $escape_ical($user_name);
+		$location_escaped = $escape_ical($location);
+
+		// Create unique ID for this event
+		$uid = md5($entry->id . '-' . $date . '-' . $entry->userid) . '@' . str_replace(array('http://', 'https://'), '', home_url());
+
+		// Format dates for iCal (all-day event format)
+		$date_formatted = date('Ymd', strtotime($date));
+		$now_formatted = gmdate('Ymd\THis\Z');
+
+		// Create event
+		$ical .= "BEGIN:VEVENT\r\n";
+		$ical .= "UID:" . $uid . "\r\n";
+		$ical .= "DTSTAMP:" . $now_formatted . "\r\n";
+		$ical .= "LAST-MODIFIED:" . $now_formatted . "\r\n";
+		$ical .= "CREATED:" . $now_formatted . "\r\n";
+		$ical .= "DTSTART;VALUE=DATE:" . $date_formatted . "\r\n";
+		$ical .= "DTEND;VALUE=DATE:" . date('Ymd', strtotime($date . ' +1 day')) . "\r\n";
+		$ical .= "SUMMARY:" . $user_name_escaped . " - " . $location_escaped . "\r\n";
+		$ical .= "DESCRIPTION:" . $user_name_escaped . " will be at: " . $location_escaped . "\r\n";
+		$ical .= "LOCATION:" . $location_escaped . "\r\n";
+		$ical .= "STATUS:CONFIRMED\r\n";
+		$ical .= "SEQUENCE:0\r\n";
+		$ical .= "TRANSP:TRANSPARENT\r\n";
+		$ical .= "END:VEVENT\r\n";
+	}
+
+	$ical .= "END:VCALENDAR\r\n";
+
+	// Get our buffer content and clear it
+	$buffer_content = ob_get_clean();
+
+	// Clear ALL remaining output buffers
+	while (ob_get_level()) {
+		ob_end_clean();
+	}
+
+	// Set proper status and headers - must come before any output
+	// CRITICAL: Remove Content-Disposition to prevent download trigger
+	status_header(200);
+	header('Content-Type: text/calendar; charset=utf-8', true);
+	header('Cache-Control: no-cache, must-revalidate', true);
+	header('Pragma: no-cache', true);
+	header_remove('X-Powered-By');
+	header_remove('Content-Disposition'); // Remove any download headers
+
+	// Output ONLY the ical content and exit immediately
+	echo $ical;
+	exit();
 }

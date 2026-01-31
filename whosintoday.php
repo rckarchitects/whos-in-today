@@ -109,11 +109,65 @@ if (!function_exists('whosintoday_table')) {
         whosintoday_schedule_reminder_cron();
     }
 
+    // Add rewrite rule for calendar feed that bypasses WPO365
+    function whosintoday_add_feed_rewrite() {
+        // Add custom rewrite rule: /calendar-feed/?token=xxx
+        add_rewrite_rule(
+            '^calendar-feed/?$',
+            'index.php?wit_calendar_feed=1',
+            'top'
+        );
+        add_rewrite_tag('%wit_calendar_feed%', '1');
+    }
+    add_action('init', 'whosintoday_add_feed_rewrite');
+
+    // Handle calendar feed requests at parse_request (before template_redirect)
+    function whosintoday_handle_feed_request($wp) {
+        if (isset($wp->query_vars['wit_calendar_feed']) && $wp->query_vars['wit_calendar_feed'] == '1') {
+            // Load feed.php directly which uses SHORTINIT
+            $feed_file = plugin_dir_path(__FILE__) . 'feed.php';
+            if (file_exists($feed_file)) {
+                include($feed_file);
+                exit;
+            }
+        }
+    }
+    add_action('parse_request', 'whosintoday_handle_feed_request', 1);
+
+    // Backup: Try to bypass WPO365 with filters
+    add_filter('wpo365/openidconnect/should_redirect', function($should_redirect) {
+        if (isset($_GET['wit_calendar_feed']) || (isset($_SERVER['REQUEST_URI']) && strpos($_SERVER['REQUEST_URI'], '/calendar-feed') !== false)) {
+            return false;
+        }
+        return $should_redirect;
+    }, 1);
+
+    add_filter('wpo365/user/skip_authentication', function($skip) {
+        if (isset($_GET['wit_calendar_feed']) || (isset($_SERVER['REQUEST_URI']) && strpos($_SERVER['REQUEST_URI'], '/calendar-feed') !== false)) {
+            return true;
+        }
+        return $skip;
+    }, 1);
+
+    // Flush rewrite rules on activation
+    function whosintoday_activate() {
+        // Add the feed rewrite rule
+        whosintoday_add_feed_rewrite();
+        flush_rewrite_rules();
+    }
+
+    // Flush on deactivation too
+    function whosintoday_deactivate() {
+        whosintoday_deactivate_reminder_cron();
+        flush_rewrite_rules();
+    }
+
+    register_activation_hook( __FILE__, 'whosintoday_activate' );
     register_activation_hook( __FILE__, 'whosintoday_table' );
     register_activation_hook( __FILE__, 'whosintoday_bankholidays_table' );
     register_activation_hook( __FILE__, 'whosintoday_locations_table' );
     register_activation_hook( __FILE__, 'whosintoday_schedule_reminder_cron' );
-    register_deactivation_hook( __FILE__, 'whosintoday_deactivate_reminder_cron' );
+    register_deactivation_hook( __FILE__, 'whosintoday_deactivate' );
 
     // Check and create locations table if it doesn't exist (for existing installations)
     function whosintoday_check_locations_table() {
@@ -135,6 +189,16 @@ if (!function_exists('whosintoday_table')) {
         }
     }
     add_action('plugins_loaded', 'whosintoday_load_functions', 1);
+
+    // Handle calendar feed requests - must happen before any output
+    function whosintoday_handle_calendar_feed() {
+        if (isset($_GET['wit_calendar_feed']) && $_GET['wit_calendar_feed'] == '1') {
+            if (function_exists('WITGenerateCalendarFeed')) {
+                WITGenerateCalendarFeed();
+            }
+        }
+    }
+    add_action('template_redirect', 'whosintoday_handle_calendar_feed', 1);
 
     // Add menu - must wait until admin_menu action
     function whosintoday_menu() {
@@ -337,6 +401,49 @@ if (!function_exists('whosintoday_table')) {
             if (function_exists('WITSendTestEmail')) {
                 WITSendTestEmail();
             }
+        }
+
+        // Handle MU-plugin installation
+        if (isset($_POST['wit_install_mu_plugin']) && !empty($_POST['wit_install_mu_plugin'])) {
+            // Verify nonce for security
+            if (!isset($_POST['wit_settings_nonce']) || !wp_verify_nonce($_POST['wit_settings_nonce'], 'wit_save_settings')) {
+                wp_die('Security check failed');
+            }
+
+            // Check user capabilities
+            if (!current_user_can('install_plugins')) {
+                wp_die(__('You do not have sufficient permissions to install plugins.'));
+            }
+
+            $mu_plugins_dir = WPMU_PLUGIN_DIR;
+            $mu_plugin_file = $mu_plugins_dir . '/calendar-feed-loader.php';
+            $source_file = plugin_dir_path(__FILE__) . 'calendar-feed-loader.php';
+
+            // Create mu-plugins directory if it doesn't exist
+            if (!file_exists($mu_plugins_dir)) {
+                wp_mkdir_p($mu_plugins_dir);
+            }
+
+            // Copy the file
+            if (copy($source_file, $mu_plugin_file)) {
+                add_settings_error(
+                    'wit_messages',
+                    'wit_mu_plugin_installed',
+                    __('WPO365 bypass plugin installed successfully! Your calendar feed should now work without authentication.', 'whos-in-today'),
+                    'success'
+                );
+            } else {
+                add_settings_error(
+                    'wit_messages',
+                    'wit_mu_plugin_failed',
+                    __('Failed to install MU-plugin. Please install manually.', 'whos-in-today'),
+                    'error'
+                );
+            }
+
+            // Redirect back to settings page
+            wp_redirect(admin_url('admin.php?page=wit_settings&settings-updated=true'));
+            exit;
         }
     }
     add_action('admin_init', 'whosintoday_handle_settings_submission');
